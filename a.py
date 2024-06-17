@@ -382,4 +382,3 @@ warnings.filterwarnings('ignore')
 #             new_path = os.path.join(target_directory, mapping_dict[subdir])
 #             os.rename(old_path, new_path)
 #             print(f"目录 {old_path} 更名为 {new_path}")
-# test
