@@ -17,7 +17,7 @@ data_config = {
     ],
     'Ncams':
     6,
-    'input_size': (512, 1408),
+    'input_size': (256, 704),
     'src_size': (900, 1600),
 
     # Augmentation
@@ -29,10 +29,10 @@ data_config = {
 }
 
 grid_config = {
-    'x': [-51.2, 51.2, 0.8],
-    'y': [-51.2, 51.2, 0.8],
+    'x': [-40, 40, 0.4],
+    'y': [-40, 40, 0.4],
     'z': [-1, 5.4, 6.4],
-    'depth': [1.0, 45.0, 0.5],
+    'depth': [1.0, 45.0, 1.0],
 }
 
 voxel_size = [0.1, 0.1, 0.2]
@@ -40,21 +40,18 @@ voxel_size = [0.1, 0.1, 0.2]
 numC_Trans = 64
 
 model = dict(
-    type='BEVDetOCC',
-    is_centercrop=True,
-    upsample=True,
+    type='BEVDepthOCC',     # single-frame
     img_backbone=dict(
         type='ResNet',
-        depth=101,
+        depth=50,
         num_stages=4,
         out_indices=(2, 3),
-        frozen_stages=1,
-        norm_cfg=dict(type='BN2d', requires_grad=False),
-        norm_eval=True,
-        style='caffe',
-        with_cp=True,  # using checkpoint to save GPU memory
-        dcn=dict(type='DCNv2', deform_groups=1, fallback_on_stride=False),
-        stage_with_dcn=(False, False, True, True)
+        frozen_stages=-1,
+        norm_cfg=dict(type='BN', requires_grad=True),
+        norm_eval=False,
+        with_cp=True,
+        style='pytorch',
+        pretrained='torchvision://resnet50',
     ),
     img_neck=dict(
         type='CustomFPN',
@@ -64,13 +61,13 @@ model = dict(
         start_level=0,
         out_ids=[0]),
     img_view_transformer=dict(
-        type='LSSViewTransformer',
+        type='LSSViewTransformerBEVDepth',
         grid_config=grid_config,
         input_size=data_config['input_size'],
         in_channels=256,
         out_channels=numC_Trans,
-        sid=False,
-        collapse_z=True,
+        loss_depth_weight=1,
+        depthnet_cfg=dict(use_dcn=False, aspp_mid_channels=96),
         downsample=16),
     img_bev_encoder_backbone=dict(
         type='CustomResNet',
@@ -79,20 +76,19 @@ model = dict(
     img_bev_encoder_neck=dict(
         type='FPN_LSS',
         in_channels=numC_Trans * 8 + numC_Trans * 2,
-        out_channels=256),
+        out_channels=128),
     occ_head=dict(
-        type='BEVOCCHead2D',
-        in_dim=256,
+        type='BEVOCCHead2D_V2',
+        in_dim=128,
         out_dim=128,
         Dz=16,
-        use_mask=True,
+        use_mask=False,
         num_classes=18,
         use_predicter=True,
-        class_wise=False,
+        class_balance=True,
         loss_occ=dict(
-            type='CrossEntropyLoss',
-            use_sigmoid=False,
-            ignore_index=255,
+            type='CustomFocalLoss',
+            use_sigmoid=True,
             loss_weight=1.0
         ),
     )
@@ -222,7 +218,62 @@ custom_hooks = [
     ),
 ]
 
-load_from = 'ckpts/r101_dcn_fcos3d_pretrain.pth'
+load_from = "ckpts/bevdet-r50-4d-depth-cbgs.pth"
 # fp16 = dict(loss_scale='dynamic')
 evaluation = dict(interval=1, start=20, pipeline=test_pipeline)
 checkpoint_config = dict(interval=1, max_keep_ckpts=5)
+
+
+# use_mask = False
+# ===> per class IoU of 6019 samples:
+# ===> others - IoU = 10.69
+# ===> barrier - IoU = 39.67
+# ===> bicycle - IoU = 22.01
+# ===> bus - IoU = 39.99
+# ===> car - IoU = 40.46
+# ===> construction_vehicle - IoU = 20.44
+# ===> motorcycle - IoU = 24.52
+# ===> pedestrian - IoU = 22.5
+# ===> traffic_cone - IoU = 23.72
+# ===> trailer - IoU = 25.93
+# ===> truck - IoU = 29.75
+# ===> driveable_surface - IoU = 58.29
+# ===> other_flat - IoU = 31.46
+# ===> sidewalk - IoU = 33.92
+# ===> terrain - IoU = 31.25
+# ===> manmade - IoU = 17.46
+# ===> vegetation - IoU = 17.97
+# ===> mIoU of 6019 samples: 28.83
+# {'mIoU': array([0.1068576 , 0.3967071 , 0.220114  , 0.3998965 , 0.40462457,
+#        0.20442682, 0.24516316, 0.22497209, 0.23719173, 0.25925541,
+#        0.29754347, 0.58293305, 0.31458314, 0.33921965, 0.31254221,
+#        0.17456574, 0.17970859, 0.8315865 ])}
+
+
+# Starting Evaluation...
+# 6019it [10:23,  9.65it/s]
+# +----------------------+----------+----------+----------+
+# |     Class Names      | RayIoU@1 | RayIoU@2 | RayIoU@4 |
+# +----------------------+----------+----------+----------+
+# |        others        |  0.094   |  0.107   |  0.111   |
+# |       barrier        |  0.367   |  0.421   |  0.443   |
+# |       bicycle        |  0.209   |  0.251   |  0.261   |
+# |         bus          |  0.498   |  0.601   |  0.665   |
+# |         car          |  0.472   |  0.550   |  0.581   |
+# | construction_vehicle |  0.175   |  0.251   |  0.287   |
+# |      motorcycle      |  0.205   |  0.292   |  0.315   |
+# |      pedestrian      |  0.289   |  0.339   |  0.354   |
+# |     traffic_cone     |  0.276   |  0.302   |  0.314   |
+# |       trailer        |  0.203   |  0.289   |  0.380   |
+# |        truck         |  0.396   |  0.493   |  0.546   |
+# |  driveable_surface   |  0.528   |  0.611   |  0.702   |
+# |      other_flat      |  0.280   |  0.315   |  0.346   |
+# |       sidewalk       |  0.233   |  0.279   |  0.328   |
+# |       terrain        |  0.218   |  0.286   |  0.353   |
+# |       manmade        |  0.268   |  0.347   |  0.398   |
+# |      vegetation      |  0.174   |  0.272   |  0.358   |
+# +----------------------+----------+----------+----------+
+# |         MEAN         |  0.287   |  0.353   |  0.397   |
+# +----------------------+----------+----------+----------+
+# {'RayIoU': 0.34574739050176573, 'RayIoU@1': 0.2873820616941079, 'RayIoU@2': 0.3533573712072785,
+# 'RayIoU@4': 0.39650273860391083}

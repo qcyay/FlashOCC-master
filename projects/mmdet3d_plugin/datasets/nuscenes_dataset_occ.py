@@ -9,6 +9,13 @@ from tqdm import tqdm
 from mmdet3d.datasets import DATASETS
 from .nuscenes_dataset_bevdet import NuScenesDatasetBEVDet as NuScenesDataset
 from ..core.evaluation.occ_metrics import Metric_mIoU, Metric_FScore
+from .ego_pose_dataset import EgoPoseDataset
+from ..core.evaluation.ray_metrics import main as calc_rayiou
+from torch.utils.data import DataLoader
+from ..core.evaluation.ray_metrics import main_raypq
+import torch
+import glob
+
 
 colors_map = np.array(
     [
@@ -90,11 +97,7 @@ class NuScenesDatasetOccpancy(NuScenesDataset):
                 mask_camera     # (Dx, Dy, Dz)
             )
 
-            # if index % 100 == 0 and show_dir is not None:
-            #     gt_vis = self.vis_occ(gt_semantics)
-            #     pred_vis = self.vis_occ(occ_pred)
-            #     mmcv.imwrite(np.concatenate([gt_vis, pred_vis], axis=1),
-            #                  os.path.join(show_dir + "%d.jpg"%index))
+            sample_tokens = [info['token'] for info in self.data_infos]
 
             if show_dir is not None:
                 mmcv.mkdir_or_exist(show_dir)
@@ -106,7 +109,16 @@ class NuScenesDatasetOccpancy(NuScenesDataset):
                 save_path = os.path.join(show_dir, scene_name, sample_token, 'pred.npz')
                 np.savez_compressed(save_path, pred=occ_pred, gt=occ_gt, sample_token=sample_token)
 
-        return self.occ_eval_metrics.count_miou()
+                data_id = sample_tokens.index(token)
+                info = self.data_infos[data_id]
+                # occ_gt = np.load(os.path.join(self.data_root, info['occ_path'], 'labels.npz'))
+                # occ_gt = np.load(os.path.join(info['occ_path'], 'labels.npz'))
+                occ_gt = np.load(os.path.join(info['occ_path'].replace('data/nuscenes/gts/', 'data/nuscenes/occ3d_panoptic/'), 'labels.npz'))
+                gt_semantics = occ_gt['semantics']      # (Dx, Dy, Dz)
+                mask_lidar = occ_gt['mask_lidar'].astype(bool)      # (Dx, Dy, Dz)
+                mask_camera = occ_gt['mask_camera'].astype(bool)    # (Dx, Dy, Dz)
+                occ_pred = occ_results[data_id]['pred_occ'].cpu().numpy()     # (Dx, Dy, Dz)
+                # occ_pred = occ_results[data_id]['pred_occ']     # (Dx, Dy, Dz)
 
     def save_pred(self, occ_results, show_dir=None):
 

@@ -4,7 +4,7 @@
 *.o
 *.so
 *.pyc
-work_dirs
+work_dirs/*
 projects/mmdet3d_plugin.egg-info/
 projects/flashocc_plugin.egg-info/
 nuscenes
@@ -21,3 +21,8 @@ data/
 build-old
 ppl.cv
 .vscode
+*.npz
+
+vis/
+*.jpg
+*.png
