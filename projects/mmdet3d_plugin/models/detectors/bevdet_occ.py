@@ -60,6 +60,7 @@ class BEVDetOCC(BEVDet):
         # img_feats: List[(B, C, Dz, Dy, Dx)/(B, C, Dy, Dx) , ]
         # pts_feats: None
         # depth: (B*N_views, D, fH, fW)
+        # breakpoint()
         img_feats, pts_feats, depth = self.extract_feat(
             points, img_inputs=img_inputs, img_metas=img_metas, **kwargs)
 
@@ -100,22 +101,25 @@ class BEVDetOCC(BEVDet):
         return loss_occ
 
     def simple_test(self,
-                    points,
-                    img_metas,
+                    points=None,
+                    img_metas=None,
                     img=None,
                     rescale=False,
                     **kwargs):
         # img_feats: List[(B, C, Dz, Dy, Dx)/(B, C, Dy, Dx) , ]
         # pts_feats: None
         # depth: (B*N_views, D, fH, fW)
+        # print('test')
+        # img_feats，列表，包含1个表示BEV特征的张量，尺寸为[B,C',Dy,Dx]
         img_feats, _, _ = self.extract_feat(
             points, img_inputs=img, img_metas=img_metas, **kwargs)
-
+        #尺寸为[B,C',Dy,Dx]
         occ_bev_feature = img_feats[0]
         if self.upsample:
             occ_bev_feature = F.interpolate(occ_bev_feature, scale_factor=2,
                                             mode='bilinear', align_corners=True)
 
+        #列表，包含B个数组，尺寸为[Dx,Dy,Dz]
         occ_list = self.simple_test_occ(occ_bev_feature, img_metas)    # List[(Dx, Dy, Dz), (Dx, Dy, Dz), ...]
         return occ_list
 
@@ -128,7 +132,10 @@ class BEVDetOCC(BEVDet):
         Returns:
             occ_preds: List[(Dx, Dy, Dz), (Dx, Dy, Dz), ...]
         """
+        # print('test')
+        # 占用预测结果，尺寸为[B,Dx,Dy,Dz,n_cls]
         outs = self.occ_head(img_feats)
+        #列表，包含B个数组，尺寸为[Dx,Dy,Dz]
         occ_preds = self.occ_head.get_occ(outs, img_metas)      # List[(Dx, Dy, Dz), (Dx, Dy, Dz), ...]
         return occ_preds
 
@@ -376,6 +383,8 @@ class BEVDetOCCTRT(BEVDetOCC):
 
 
     def get_bev_pool_input(self, input):
+        # input，处理后的输入，列表，包含7个元素，imgs，环视图像，尺寸为[B,N,C,H,W]，sensor2keyegos，相机到关键自车坐标系的变换矩阵，尺寸为[B,N,4,4]，ego2globals，自车到全局坐标系的变换矩阵，尺寸为[B,N,4,4]
+        # intrins，内参矩阵，尺寸为[B,N,3,3]，post_rots，图像增广旋转，尺寸为[B,N,3,3]，post_trans，图像增广平移，尺寸为[B,N,3]，bda，BEV增广矩阵，尺寸为[3,3]
         input = self.prepare_inputs(input)
         coor = self.img_view_transformer.get_lidar_coor(*input[1:7])
         return self.img_view_transformer.voxel_pooling_prepare_v2(coor)

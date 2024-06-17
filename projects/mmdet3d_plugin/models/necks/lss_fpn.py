@@ -63,13 +63,18 @@ class FPN_LSS(nn.Module):
         Returns:
             x: (B, C_out, 2*H, 2*W)
         """
+        #x2，尺寸为[B,2C,Dy/2,Dx/2]，x1，尺寸为[B,8C,Dy/8,Dx/8]
         x2, x1 = feats[self.input_feature_index[0]], feats[self.input_feature_index[1]]
         if self.lateral:
             x2 = self.lateral_conv(x2)
+        #尺寸为[B,8C,Dy/2,Dx/2]
         x1 = self.up(x1)    # (B, C3, H, W)
+        #尺寸为[B,10C,Dy/2,Dx/2]
         x1 = torch.cat([x2, x1], dim=1)     # (B, C1+C3, H, W)
+        #尺寸为[B,2*C_out,Dy/2,Dx/2]
         x = self.conv(x1)   # (B, C', H, W)
         if self.extra_upsample:
+            # 尺寸为[B,C_out,Dy,Dx]
             x = self.up2(x)     # (B, C_out, 2*H, 2*W)
         return x
 

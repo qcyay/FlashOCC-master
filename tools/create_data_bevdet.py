@@ -100,7 +100,8 @@ def nuscenes_data_prep(root_path, info_prefix, version, max_sweeps=10):
 
 
 def add_ann_adj_info(extra_tag):
-    nuscenes_version = 'v1.0-trainval'
+    # nuscenes_version = 'v1.0-trainval'
+    nuscenes_version = 'v1.0-mini'
     dataroot = './data/nuscenes/'
     nuscenes = NuScenes(nuscenes_version, dataroot)
     for set in ['train', 'val']:
@@ -134,9 +135,12 @@ def add_ann_adj_info(extra_tag):
 
 
 if __name__ == '__main__':
+    #数据集
     dataset = 'nuscenes'
     version = 'v1.0'
-    train_version = f'{version}-trainval'
+    # train_version = f'{version}-trainval'
+    train_version = f'{version}-mini'
+    #数据集路径
     root_path = 'data/nuscenes'
     extra_tag = 'bevdetv2-nuscenes'
     nuscenes_data_prep(

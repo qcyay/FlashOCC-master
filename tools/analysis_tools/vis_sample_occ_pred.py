@@ -1,6 +1,7 @@
 import os
 
 import mmcv
+from mmcv import Config, DictAction
 import open3d as o3d
 import numpy as np
 import torch
@@ -10,7 +11,10 @@ from typing import Tuple, List, Dict, Iterable
 import argparse
 import cv2
 
-#适用于在含有占用栅格真值并以NuScenes格式组织的数据集上的对预测结果的可视化
+#适用于对根据不含有占用栅格真值并不以NuScenes格式组织的图像得到的预测结果的可视化
+
+IMAGE_HEIGHT = 900
+IMAGE_WIDTH = 1600
 
 NOT_OBSERVED = -1
 FREE = 0
@@ -25,26 +29,25 @@ SPTIAL_SHAPE = [200, 200, 16]
 TGT_VOXEL_SIZE = [0.4, 0.4, 0.4]
 TGT_POINT_CLOUD_RANGE = [-40, -40, -1, 40, 40, 5.4]
 
-
 colormap_to_colors = np.array(
     [
         [0,   0,   0, 255],  # 0 undefined
-        [112, 128, 144, 255],  # 1 barrier  orange
-        [220, 20, 60, 255],    # 2 bicycle  Blue
-        [255, 127, 80, 255],   # 3 bus  Darkslategrey
-        [255, 158, 0, 255],  # 4 car  Crimson
-        [233, 150, 70, 255],   # 5 cons. Veh  Orangered
-        [255, 61, 99, 255],  # 6 motorcycle  Darkorange
-        [0, 0, 230, 255], # 7 pedestrian  Darksalmon
-        [47, 79, 79, 255],  # 8 traffic cone  Red
-        [255, 140, 0, 255],# 9 trailer  Slategrey
-        [255, 99, 71, 255],# 10 truck Burlywood
-        [0, 207, 191, 255],    # 11 drive sur  Green
-        [175, 0, 75, 255],  # 12 other lat  nuTonomy green
-        [75, 0, 75, 255],  # 13 sidewalk
-        [112, 180, 60, 255],    # 14 terrain
+        [112, 128, 144, 255],  # 1 障碍物 barrier  orange
+        [220, 20, 60, 255],    # 2 自行车 bicycle  Blue
+        [255, 127, 80, 255],   # 3 bus 公共汽车 Darkslategrey
+        [255, 158, 0, 255],  # 4 car 汽车 Crimson
+        [233, 150, 70, 255],   # 5 cons. Veh 施工车辆 construction_vehicle Orangered
+        [255, 61, 99, 255],  # 6 motorcycle 摩托车 Darkorange
+        [0, 0, 230, 255], # 7 pedestrian 行人 Darksalmon
+        [47, 79, 79, 255],  # 8 traffic cone 交通锥 Red
+        [255, 140, 0, 255],# 9 trailer 拖车 Slategrey
+        [255, 99, 71, 255],# 10 truck 卡车 Burlywood
+        [0, 207, 191, 255],    # 11 drive sur 可行驶区域 driveable_surface Green
+        [175, 0, 75, 255],  # 12 other flat  nuTonomy green
+        [75, 0, 75, 255],  # 13 sidewalk 人行道
+        [112, 180, 60, 255],    # 14 terrain 地面
         [222, 184, 135, 255],    # 15 manmade
-        [0, 175, 0, 255],   # 16 vegeyation
+        [0, 175, 0, 255],   # 16 植被 vegeyation
 ], dtype=np.float32)
 
 # 将占用栅格坐标转换为点坐标
@@ -69,6 +72,43 @@ def voxel2points(voxel, occ_show, voxelSize):
                        dim=1)      # (N, 3) 3: (x, y, z)
     return points, voxel[occIdx], occIdx
 
+#将占用栅格坐标转换为点坐标并转换到图像坐标系下，并得到有效的点序号（有效意味着点在相机朝向方向并落在图像范围内）
+def voxel2pixels(voxel, intrinsic, sensor2ego):
+
+    #尺寸为[Dx,Dy,Dz]
+    occ_show = np.ones(SPTIAL_SHAPE)
+    voxel_size = VOXEL_SIZE
+    # pcd，需要显示的占用栅格对应的点坐标，尺寸为[N,3]，labels，需要显示的占用栅格类别，尺寸为[N]，需要显示的占用栅格的坐标
+    pcd, labels, _ = voxel2points(voxel, occ_show, voxel_size)
+    # 尺寸为[N,4]
+    pcd = np.insert(pcd, 3, 1, 1)
+    #尺寸为[3,4]
+    cam2img = np.zeros((3,4))
+    #尺寸为[3,4]
+    cam2img[:3,:3] = intrinsic
+    # #变换矩阵可参考文章Interactive Navigation in Environments with Traversable Obstacles Using Large Language and Vision-Language Models中公式2
+    # #自车到像素坐标系变换矩阵，尺寸为[3,4]
+    # combine = cam2img @ np.linalg.inv(sensor2ego)
+    #在相机坐标系下点齐次坐标，尺寸为[N,4]
+    points = np.linalg.inv(sensor2ego) @ pcd
+    #尺寸为[N]
+    camera_mask = (points[:,2] > 0)
+    #尺寸为[N,3]
+    points = cam2img @ pcd
+    #尺寸为[N,3]
+    points[:,:2] /= points[:,2]
+    #尺寸为[N,2]
+    points = points[:,:2]
+    #尺寸为[N]
+    camera_mask = (points[:, 0] >= 0) & (points[:, 0] < 0) & (points[:, 1] >= 0) & (points[:, 1] < 0) & camera_mask
+    #尺寸为[n]
+    idxs = np.where(camera_mask)[0]
+    #尺寸为[n]
+    points = points[idxs]
+    #尺寸为[Dx,Dy,Dz]
+    camera_mask = camera_mask.reshape(SPTIAL_SHAPE)
+
+    return points, camera_mask
 
 def voxel_profile(voxel, voxel_size):
     """
@@ -233,7 +273,6 @@ def show_occ(occ_state, occ_show, voxel_size, vis=None, offset=[0, 0, 0]):
     )
     return vis
 
-
 def generate_the_ego_car():
     ego_range = [-2, -1, 0, 2, 1, 1.5]
     ego_voxel_size=[0.1, 0.1, 0.1]
@@ -260,6 +299,8 @@ def parse_args():
                                      'result of nuScenes')
     parser.add_argument(
         'res', help='Path to the predicted result')
+    # 配置文件路径
+    parser.add_argument('--config', default=None, help='test config file path')
     parser.add_argument(
         '--canva-size', type=int, default=1000, help='Size of canva in pixel')
     parser.add_argument(
@@ -274,16 +315,15 @@ def parse_args():
         help='Trade-off between image-view and bev in size of '
         'the visualized canvas')
     parser.add_argument(
-        '--version',
-        type=str,
-        default='val',
-        help='Version of nuScenes dataset')
-    parser.add_argument('--draw-gt', action='store_true')
-    parser.add_argument(
-        '--root_path',
+        '--image_path',
         type=str,
         default='./data/nuscenes',
-        help='Path to nuScenes dataset')
+        help='Path to images')
+    parser.add_argument(
+        '--vis_id',
+        type=int,
+        default=-1,
+        help='The ordinal number of the displayed occupancy grid category')
     parser.add_argument(
         '--save_path',
         type=str,
@@ -302,17 +342,17 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-
 def main():
     args = parse_args()
     # load predicted results
     #保存占用预测结果路径
     results_dir = args.res
 
-    # load dataset information
-    info_path = \
-        args.root_path + '/bevdetv2-nuscenes_infos_%s.pkl' % args.version
-    dataset = pickle.load(open(info_path, 'rb'))
+    # 加载配置文件
+    # Config类用于操作配置文件，它支持从多种文件格式中加载配置，包括python，json和yaml
+    # 对于所有格式的配置文件, 都支持继承。为了重用其他配置文件的字段，需要指定__base__
+    cfg = Config.fromfile(args.config)
+
     # prepare save path and medium
     #保存可视化结果路径
     vis_dir = args.save_path
@@ -338,50 +378,44 @@ def main():
     vis = o3d.visualization.VisualizerWithKeyCallback()
     vis.create_window()
 
-    for cnt, info in enumerate(
-            dataset['infos'][:min(args.vis_frames, len(dataset['infos']))]):
+    # 样本数据标记列表
+    sample_token_list = os.listdir(results_dir)
+    for cnt, sample_token in enumerate(
+            sample_token_list[:min(args.vis_frames, len(sample_token_list))]):
         if cnt % 10 == 0:
-            print('%d/%d' % (cnt, min(args.vis_frames, len(dataset['infos']))))
+            print('%d/%d' % (cnt, min(args.vis_frames, len(sample_token_list))))
 
-        #场景序号
-        scene_name = info['scene_name']
-        #样本数据标记
-        sample_token = info['token']
-
-        #占用栅格预测结果路径
-        pred_occ_path = os.path.join(results_dir, scene_name, sample_token, 'pred.npz')
-        #占用栅格真值路径
-        gt_occ_path = info['occ_path']
+        # 占用栅格预测结果路径
+        pred_occ_path = os.path.join(results_dir, sample_token, 'pred.npz')
 
         #占用栅格预测结果，尺寸为[Dx,Dy,Dz]
         pred_occ = np.load(pred_occ_path)['pred']
-        gt_data = np.load(os.path.join(args.root_path, gt_occ_path, 'labels.npz'))
-        #占用栅格真值，尺寸为[Dx,Dy,Dz]
-        voxel_label = gt_data['semantics']
-        #尺寸为[Dx,Dy,Dz]
-        lidar_mask = gt_data['mask_lidar']
-        #尺寸为[Dx,Dy,Dz]
-        camera_mask = gt_data['mask_camera']
+        # breakpoint()
 
         # load imgs
         #各视角图像，列表
         imgs = []
         for view in views:
-            img = cv2.imread(info['cams'][view]['data_path'])
+            if view in cfg.data_config['cams']:
+                img = cv2.imread(os.path.join(args.image_path, view, f'{sample_token}.jpg'))
+                img = cv2.resize(img, (IMAGE_WIDTH, IMAGE_HEIGHT))
+            else:
+                img = np.zeros((IMAGE_HEIGHT, IMAGE_WIDTH, 3), dtype=np.uint8)
             imgs.append(img)
 
         # occ_canvas
         #表示占据栅格是否被显示的标记，尺寸为[Dx,Dy,Dz]
+        if args.vis_id > -1:
+            camera_mask = np.zeros(SPTIAL_SHAPE)
+            vis_inds = np.where(pred_occ == args.vis_id)
+            camera_mask[vis_inds] = 1
+        else:
+            camera_mask = np.ones(SPTIAL_SHAPE)
+            camera_mask[:,:,10:] = 0
         voxel_show = np.logical_and(pred_occ != FREE_LABEL, camera_mask)
-        # voxel_show = pred_occ != FREE_LABEL
         voxel_size = VOXEL_SIZE
         vis = show_occ(torch.from_numpy(pred_occ), torch.from_numpy(voxel_show), voxel_size=voxel_size, vis=vis,
                        offset=[0, pred_occ.shape[0] * voxel_size[0] * 1.2 * 0, 0])
-
-        if args.draw_gt:
-            voxel_show = np.logical_and(voxel_label != FREE_LABEL, camera_mask)
-            vis = show_occ(torch.from_numpy(voxel_label), torch.from_numpy(voxel_show), voxel_size=voxel_size, vis=vis,
-                           offset=[0, voxel_label.shape[0] * voxel_size[0] * 1.2 * 1, 0])
 
         view_control = vis.get_view_control()
 
@@ -408,11 +442,6 @@ def main():
         #update_renderer用于更新当前的渲染器
         vis.update_renderer()
         # vis.run()
-
-        # if args.format == 'image':
-        #     out_dir = os.path.join(vis_dir, f'{scene_name}', f'{sample_token}')
-        #     mmcv.mkdir_or_exist(out_dir)
-        #     vis.capture_screen_image(os.path.join(out_dir, 'screen_occ.png'), do_render=True)
 
         #capture_screen_float_buffer捕获屏幕并将RGB存储在浮动缓冲区
         occ_canvas = vis.capture_screen_float_buffer(do_render=True)
@@ -443,7 +472,7 @@ def main():
                 w_begin:w_begin + canva_size, :] = occ_canvas_resize
 
         if args.format == 'image':
-            out_dir = os.path.join(vis_dir, f'{scene_name}', f'{sample_token}')
+            out_dir = os.path.join(vis_dir, f'{sample_token}')
             mmcv.mkdir_or_exist(out_dir)
             for i, img in enumerate(imgs):
                 cv2.imwrite(os.path.join(out_dir, f'img{i}.png'), img)
@@ -452,9 +481,7 @@ def main():
         elif args.format == 'video':
             cv2.putText(big_img, f'{cnt:{cnt}}', (5, 15), fontFace=cv2.FONT_HERSHEY_COMPLEX, color=(0, 0, 0),
                         fontScale=0.5)
-            cv2.putText(big_img, f'{scene_name}', (5, 35), fontFace=cv2.FONT_HERSHEY_COMPLEX, color=(0, 0, 0),
-                        fontScale=0.5)
-            cv2.putText(big_img, f'{sample_token[:5]}', (5, 55), fontFace=cv2.FONT_HERSHEY_COMPLEX, color=(0, 0, 0),
+            cv2.putText(big_img, f'{sample_token}', (5, 55), fontFace=cv2.FONT_HERSHEY_COMPLEX, color=(0, 0, 0),
                         fontScale=0.5)
             vout.write(big_img)
 

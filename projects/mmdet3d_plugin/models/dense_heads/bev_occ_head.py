@@ -178,11 +178,14 @@ class BEVOCCHead2D(BaseModule):
 
         """
         # (B, C, Dy, Dx) --> (B, C, Dy, Dx) --> (B, Dx, Dy, C)
+        #尺寸为[B,Dx,Dy,C]
         occ_pred = self.final_conv(img_feats).permute(0, 3, 2, 1)
         bs, Dx, Dy = occ_pred.shape[:3]
         if self.use_predicter:
             # (B, Dx, Dy, C) --> (B, Dx, Dy, 2*C) --> (B, Dx, Dy, Dz*n_cls)
+            #尺寸为[B,Dx,Dy,Dz*n_cls]
             occ_pred = self.predicter(occ_pred)
+            #尺寸为[B,Dx,Dy,Dz,n_cls]
             occ_pred = occ_pred.view(bs, Dx, Dy, self.Dz, self.num_classes)
 
         return occ_pred
@@ -230,7 +233,10 @@ class BEVOCCHead2D(BaseModule):
         Returns:
             List[(Dx, Dy, Dz), (Dx, Dy, Dz), ...]
         """
+        #占用预测概率，尺寸为[B,Dx,Dy,Dz,C]
         occ_score = occ_pred.softmax(-1)    # (B, Dx, Dy, Dz, C)
+        #尺寸为[B,Dx,Dy,Dz]
         occ_res = occ_score.argmax(-1)      # (B, Dx, Dy, Dz)
+        #尺寸为[B,Dx,Dy,Dz]
         occ_res = occ_res.cpu().numpy().astype(np.uint8)     # (B, Dx, Dy, Dz)
         return list(occ_res)

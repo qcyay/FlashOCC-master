@@ -54,13 +54,17 @@ class NuScenesDatasetOccpancy(NuScenesDataset):
                     from lidar to different cameras.
                 - ann_info (dict): Annotation info.
         """
+        # breakpoint()
+        # 键值dict_keys(['sample_idx', 'pts_filename', 'sweeps', 'timestamp', 'ann_infos', 'curr'])，其中curr为所有注释信息
         input_dict = super(NuScenesDatasetOccpancy, self).get_data_info(index)
         # standard protocol modified from SECOND.Pytorch
         # input_dict['occ_gt_path'] = os.path.join(self.data_root, self.data_infos[index]['occ_path'])
-        input_dict['occ_gt_path'] = self.data_infos[index]['occ_path']
+        if self.data_infos[index].__contains__('occ_path'):
+            # 'gts/scene-0103/3e8750f331d7499e9b5123e9eb70f2e2'
+            input_dict['occ_gt_path'] = self.data_infos[index]['occ_path']
         return input_dict
 
-    def evaluate(self, occ_results, runner=None, show_dir=None, **eval_kwargs):
+    def evaluate(self, occ_results, show_dir=None, **eval_kwargs):
         self.occ_eval_metrics = Metric_mIoU(
             num_classes=18,
             use_lidar_mask=False,
@@ -70,8 +74,11 @@ class NuScenesDatasetOccpancy(NuScenesDataset):
         for index, occ_pred in enumerate(tqdm(occ_results)):
             # occ_pred: (Dx, Dy, Dz)
             info = self.data_infos[index]
-            # occ_gt = np.load(os.path.join(self.data_root, info['occ_path'], 'labels.npz'))
-            occ_gt = np.load(os.path.join(info['occ_path'], 'labels.npz'))
+            # breakpoint()
+            # print(index, occ_pred.shape, info['occ_path'])
+            occ_gt = np.load(os.path.join(self.data_root, info['occ_path'], 'labels.npz'))
+            # occ_gt = np.load(os.path.join(info['occ_path'], 'labels.npz'))
+            # print(f'path:{info("occ_path")}, occ_gt:{occ_gt.size()}')
             gt_semantics = occ_gt['semantics']      # (Dx, Dy, Dz)
             mask_lidar = occ_gt['mask_lidar'].astype(bool)      # (Dx, Dy, Dz)
             mask_camera = occ_gt['mask_camera'].astype(bool)    # (Dx, Dy, Dz)
@@ -92,6 +99,7 @@ class NuScenesDatasetOccpancy(NuScenesDataset):
             if show_dir is not None:
                 mmcv.mkdir_or_exist(show_dir)
                 # scene_name = info['scene_name']
+                # breakpoint()
                 scene_name = [tem for tem in info['occ_path'].split('/') if 'scene-' in tem][0]
                 sample_token = info['token']
                 mmcv.mkdir_or_exist(os.path.join(show_dir, scene_name, sample_token))
@@ -99,6 +107,23 @@ class NuScenesDatasetOccpancy(NuScenesDataset):
                 np.savez_compressed(save_path, pred=occ_pred, gt=occ_gt, sample_token=sample_token)
 
         return self.occ_eval_metrics.count_miou()
+
+    def save_pred(self, occ_results, show_dir=None):
+
+        print('\nStarting Saving Prediction...')
+        for index, occ_pred in enumerate(tqdm(occ_results)):
+            info = self.data_infos[index]
+
+            mmcv.mkdir_or_exist(show_dir)
+            sample_token = info['token']
+            if info.__contains__('scene_name'):
+                scene_name = info['scene_name']
+                save_path = os.path.join(show_dir, scene_name, sample_token)
+            else:
+                save_path = os.path.join(show_dir, sample_token)
+            mmcv.mkdir_or_exist(save_path)
+            save_path = os.path.join(save_path, 'pred.npz')
+            np.savez_compressed(save_path, pred=occ_pred, sample_token=sample_token)
 
     def vis_occ(self, semantics):
         # simple visualization of result in BEV

@@ -38,6 +38,8 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # Config类用于操作配置文件，它支持从多种文件格式中加载配置，包括python，json和yaml
+    # 对于所有格式的配置文件, 都支持继承。为了重用其他配置文件的字段，需要指定__base__
     cfg = Config.fromfile(args.config)
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
@@ -56,8 +58,10 @@ def main():
                 _module_path = _module_dir[0]
 
                 for m in _module_dir[1:]:
+                    # projects.mmdet3d_plugin
                     _module_path = _module_path + '.' + m
                 print(_module_path)
+                # 导入一个模块
                 plg_lib = importlib.import_module(_module_path)
             else:
                 # import dir is the dirpath for the config file

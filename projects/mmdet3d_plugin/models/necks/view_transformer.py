@@ -46,10 +46,12 @@ class LSSViewTransformer(BaseModule):
         collapse_z=True,
     ):
         super(LSSViewTransformer, self).__init__()
+        #网格配置信息
         self.grid_config = grid_config
         self.downsample = downsample
         self.create_grid_infos(**grid_config)
         self.sid = sid
+        #尺寸为[D,fH,fW,3]，其中包含的3个元素为特征图点在图像上对应的横坐标、特征图点在图像上对应的纵坐标和深度
         self.frustum = self.create_frustum(grid_config['depth'],
                                            input_size, downsample)      # (D, fH, fW, 3)  3:(u, v, d)
         self.out_channels = out_channels
@@ -73,8 +75,12 @@ class LSSViewTransformer(BaseModule):
                 (lower_bound, upper_bound, interval).
             **kwargs: Container for other potential parameters
         """
+        #[-40,-40,-1]
         self.grid_lower_bound = torch.Tensor([cfg[0] for cfg in [x, y, z]])     # (min_x, min_y, min_z)
+        #[0.4,0.4,6.4]
         self.grid_interval = torch.Tensor([cfg[2] for cfg in [x, y, z]])        # (dx, dy, dz)
+        #注意这里z轴方向网格数为1，表示鸟瞰图视角下对特征沿高度方向进行压缩
+        #[200,200,1]
         self.grid_size = torch.Tensor([(cfg[1] - cfg[0]) / cfg[2]
                                        for cfg in [x, y, z]])                   # (Dx, Dy, Dz)
 
@@ -91,8 +97,12 @@ class LSSViewTransformer(BaseModule):
         Returns:
             frustum: (D, fH, fW, 3)  3:(u, v, d)
         """
+        #(256,704)
         H_in, W_in = input_size
+        #(16,44)
         H_feat, W_feat = H_in // downsample, W_in // downsample
+        #对于特征图每个位置，沿特定间隔对深度进行采样
+        #尺寸为[D,fH,fW]
         d = torch.arange(*depth_cfg, dtype=torch.float)\
             .view(-1, 1, 1).expand(-1, H_feat, W_feat)      # (D, fH, fW)
         self.D = d.shape[0]
@@ -103,8 +113,12 @@ class LSSViewTransformer(BaseModule):
                               torch.log((depth_cfg_t[1]-1) / depth_cfg_t[0]))
             d = d_sid.view(-1, 1, 1).expand(-1, H_feat, W_feat)
 
+        #在图像宽度范围内数量为采样特征图宽度的点
+        #尺寸为[D,fH,fW]
         x = torch.linspace(0, W_in - 1, W_feat,  dtype=torch.float)\
             .view(1, 1, W_feat).expand(self.D, H_feat, W_feat)      # (D, fH, fW)
+        #在图像高度范围内数量为采样特征图高度的点
+        #尺寸为[D,fH,fW]
         y = torch.linspace(0, H_in - 1, H_feat,  dtype=torch.float)\
             .view(1, H_feat, 1).expand(self.D, H_feat, W_feat)      # (D, fH, fW)
 
@@ -174,27 +188,39 @@ class LSSViewTransformer(BaseModule):
         """
         B, N, _, _ = sensor2ego.shape
 
+        #TODO 搞清楚这里的原理是什么
+
         # post-transformation
         # (D, fH, fW, 3) - (B, N, 1, 1, 1, 3) --> (B, N, D, fH, fW, 3)
+        #尺寸为[B,N,D,fH,fW,3]
         points = self.frustum.to(sensor2ego) - post_trans.view(B, N, 1, 1, 1, 3)
         # (B, N, 1, 1, 1, 3, 3) @ (B, N, D, fH, fW, 3, 1)  --> (B, N, D, fH, fW, 3, 1)
+        #尺寸为[B,N,D,fH,fW,3,1]
         points = torch.inverse(post_rots).view(B, N, 1, 1, 1, 3, 3)\
             .matmul(points.unsqueeze(-1))
 
-        # cam_to_ego
+        # cam_to_egoz
         # (B, N_, D, fH, fW, 3, 1)  3: (du, dv, d)
+        # 尺寸为[B,N,D,fH,fW,3,1]
         points = torch.cat(
             (points[..., :2, :] * points[..., 2:3, :], points[..., 2:3, :]), 5)
         # R_{c->e} @ K^-1
+        #R_i2e = R_c2e @ R_i2c，内参矩阵为相机坐标系到像素坐标系的变换矩阵
+        #像素坐标系到自车坐标系的变换矩阵，尺寸为[B,N,3,3]
         combine = sensor2ego[:, :, :3, :3].matmul(torch.inverse(cam2imgs))
         # (B, N, 1, 1, 1, 3, 3) @ (B, N, D, fH, fW, 3, 1)  --> (B, N, D, fH, fW, 3, 1)
         # --> (B, N, D, fH, fW, 3)
+        #将图像点坐标通过变换矩阵变换到在自车坐标系下的3D坐标
+        #尺寸为[B,N,D,fH,fW,3]
         points = combine.view(B, N, 1, 1, 1, 3, 3).matmul(points).squeeze(-1)
         # (B, N, D, fH, fW, 3) + (B, N, 1, 1, 1, 3) --> (B, N, D, fH, fW, 3)
+        #因为是非齐次坐标，在左乘了旋转矩阵后还要和平移矩阵相加
+        # 尺寸为[B,N,D,fH,fW,3]
         points += sensor2ego[:, :, :3, 3].view(B, N, 1, 1, 1, 3)
 
         # (B, 1, 1, 1, 3, 3) @ (B, N, D, fH, fW, 3, 1) --> (B, N, D, fH, fW, 3, 1)
         # --> (B, N, D, fH, fW, 3)
+        # 尺寸为[B,N,D,fH,fW,3]
         points = bda.view(B, 1, 1, 1, 1, 3,
                           3).matmul(points.unsqueeze(-1)).squeeze(-1)
         return points
@@ -234,6 +260,8 @@ class LSSViewTransformer(BaseModule):
         Returns:
             bev_feat: (B, C*Dz(=1), Dy, Dx)
         """
+        #ranks_bev，点所属体素的索引，索引介于(0, B*Dx*Dy*Dz-1)，尺寸为[N]，ranks_depth，深度空间中保留点的索引，索引介于(0, B*N*D*fH*fW-1)，尺寸为[N]，ranks_depth，特征空间中保留点的索引，索引介于(0, B*N*fH*fW-1)，尺寸为[N]
+        #interval_starts，得到每个体素中点的起点索引，尺寸为[N_pillar]，interval_lengths，每个体素中包含的点的数量，尺寸为[N_pillar]
         ranks_bev, ranks_depth, ranks_feat, \
             interval_starts, interval_lengths = \
             self.voxel_pooling_prepare_v2(coor)
@@ -254,15 +282,18 @@ class LSSViewTransformer(BaseModule):
             dummy = torch.cat(dummy.unbind(dim=2), 1)   # (B, C*Dz, Dy, Dx)
             return dummy
 
+        #尺寸为[B,N,fH,fW,C]
         feat = feat.permute(0, 1, 3, 4, 2)      # (B, N, fH, fW, C)
         bev_feat_shape = (depth.shape[0], int(self.grid_size[2]),
                           int(self.grid_size[1]), int(self.grid_size[0]),
                           feat.shape[-1])       # (B, Dz, Dy, Dx, C)
+        #尺寸为[B,C,Dz,Dy,Dx]
         bev_feat = bev_pool_v2(depth, feat, ranks_depth, ranks_feat, ranks_bev,
                                bev_feat_shape, interval_starts,
                                interval_lengths)    # (B, C, Dz, Dy, Dx)
         # collapse Z
         if self.collapse_z:
+            #尺寸为[B,C*Dz,Dy,Dx]
             bev_feat = torch.cat(bev_feat.unbind(dim=2), 1)     # (B, C*Dz, Dy, Dx)
         return bev_feat
 
@@ -285,24 +316,34 @@ class LSSViewTransformer(BaseModule):
         B, N, D, H, W, _ = coor.shape
         num_points = B * N * D * H * W
         # record the index of selected points for acceleration purpose
+        #每个点在整个数据集中的线性位置，尺寸为[BNDHW]
         ranks_depth = torch.range(
             0, num_points - 1, dtype=torch.int, device=coor.device)    # (B*N*D*H*W, ), [0, 1, ..., B*N*D*fH*fW-1]
+        #特征空间的索引，尺寸为[BNHW]
         ranks_feat = torch.range(
             0, num_points // D - 1, dtype=torch.int, device=coor.device)   # [0, 1, ...,B*N*fH*fW-1]
+        #尺寸为[B,N,1,H,W]
         ranks_feat = ranks_feat.reshape(B, N, 1, H, W)
+        #尺寸为[B,N,D,H,W]
         ranks_feat = ranks_feat.expand(B, N, D, H, W).flatten()     # (B*N*D*fH*fW, )
 
         # convert coordinate into the voxel space
         # ((B, N, D, fH, fW, 3) - (3, )) / (3, ) --> (B, N, D, fH, fW, 3)   3:(x, y, z)  grid coords.
+        #得到每个点在网格中的坐标
+        #尺寸为[B,N,D,H,W,3]
         coor = ((coor - self.grid_lower_bound.to(coor)) /
                 self.grid_interval.to(coor))
+        #尺寸为[BNDHW,3]
         coor = coor.long().view(num_points, 3)      # (B, N, D, fH, fW, 3) --> (B*N*D*fH*fW, 3)
         # (B, N*D*fH*fW) --> (B*N*D*fH*fW, 1)
+        #批次索引，表示每个点属于哪个批次，尺寸为[BNDHW]
         batch_idx = torch.range(0, B - 1).reshape(B, 1). \
             expand(B, num_points // B).reshape(num_points, 1).to(coor)
+        # 尺寸为[BNDHW,4]
         coor = torch.cat((coor, batch_idx), 1)      # (B*N*D*fH*fW, 4)   4: (x, y, z, batch_id)
 
         # filter out points that are outside box
+        #保留网格坐标在限制范围内的点
         kept = (coor[:, 0] >= 0) & (coor[:, 0] < self.grid_size[0]) & \
                (coor[:, 1] >= 0) & (coor[:, 1] < self.grid_size[1]) & \
                (coor[:, 2] >= 0) & (coor[:, 2] < self.grid_size[2])
@@ -310,26 +351,41 @@ class LSSViewTransformer(BaseModule):
             return None, None, None, None, None
 
         # (N_points, 4), (N_points, ), (N_points, )
+        #根据掩码筛选出有效点及其相关索引
+        #coor，保留的点对应的网格坐标，尺寸为[N,4]，对于每个点保存了网格坐标和对应的图像序号
+        #ranks_depth，尺寸为[N]，ranks_feat，尺寸为[N]
         coor, ranks_depth, ranks_feat = \
             coor[kept], ranks_depth[kept], ranks_feat[kept]
 
         # get tensors from the same voxel next to each other
+        #计算在体素空间的线性索引
+        #尺寸为[N]
         ranks_bev = coor[:, 3] * (
             self.grid_size[2] * self.grid_size[1] * self.grid_size[0])
+        #尺寸为[N]
         ranks_bev += coor[:, 2] * (self.grid_size[1] * self.grid_size[0])
+        #尺寸为[N]
         ranks_bev += coor[:, 1] * self.grid_size[0] + coor[:, 0]
+        #torch.argsort返回排序后的值所对应原张量的下标
+        #尺寸为[N]
         order = ranks_bev.argsort()
         # (N_points, ), (N_points, ), (N_points, )
         ranks_bev, ranks_depth, ranks_feat = \
             ranks_bev[order], ranks_depth[order], ranks_feat[order]
 
+        #尺寸为[N]
         kept = torch.ones(
             ranks_bev.shape[0], device=ranks_bev.device, dtype=torch.bool)
+        #找出ranks_Bev数组中相邻元素是否不同，并将结果储存在布尔数组kept中（因为同一张图像中的点可能会落在相同的体素内）
         kept[1:] = ranks_bev[1:] != ranks_bev[:-1]
+        #得到每个体素的起点索引
+        #尺寸为[N_pillar]
         interval_starts = torch.where(kept)[0].int()
         if len(interval_starts) == 0:
             return None, None, None, None, None
+        #尺寸为[N_pillar]
         interval_lengths = torch.zeros_like(interval_starts)
+        #得到每个体素中包含的点的数量
         interval_lengths[:-1] = interval_starts[1:] - interval_starts[:-1]
         interval_lengths[-1] = ranks_bev.shape[0] - interval_starts[-1]
         return ranks_bev.int().contiguous(), ranks_depth.int().contiguous(
@@ -376,7 +432,10 @@ class LSSViewTransformer(BaseModule):
 
             bev_feat = bev_feat.squeeze(2)      # (B, C, Dy, Dx)
         else:
+            #得到要预测占用情况的图像栅格在自车坐标系下的3D坐标（栅格是通过图像坐标和采样深度结合得到的）
+            #尺寸为[B,N,D,fH,fW,3]
             coor = self.get_ego_coor(*input[1:7])   # (B, N, D, fH, fW, 3)
+            #尺寸为[B,C,Dy,Dx]
             bev_feat = self.voxel_pooling_v2(
                 coor, depth.view(B, N, self.D, H, W),
                 tran_feat.view(B, N, self.out_channels, H, W))      # (B, C*Dz(=1), Dy, Dx)
@@ -419,14 +478,20 @@ class LSSViewTransformer(BaseModule):
             bev_feat: (B, C, Dy, Dx)
             depth: (B*N, D, fH, fW)
         """
+        #尺寸为[B,N,256,h,w]
         x = input[0]    # (B, N, C_in, fH, fW)
         B, N, C, H, W = x.shape
+        #尺寸为[BN,256,h,w]
         x = x.view(B * N, C, H, W)      # (B*N, C_in, fH, fW)
 
         # (B*N, C_in, fH, fW) --> (B*N, D+C, fH, fW)
+        #尺寸为[BN,152,h,w]
         x = self.depth_net(x)
+        #尺寸为[BN,D,h,w]
         depth_digit = x[:, :self.D, ...]    # (B*N, D, fH, fW)
+        #尺寸为[BN,64,h,w]
         tran_feat = x[:, self.D:self.D + self.out_channels, ...]    # (B*N, C, fH, fW)
+        #特征图每个位置深度的概率，尺寸为[BN,D,h,w]
         depth = depth_digit.softmax(dim=1)
         return self.view_transform(input, depth, tran_feat)
 

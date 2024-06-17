@@ -46,7 +46,9 @@ def create_nuscenes_infos(root_path,
     available_vers = ['v1.0-trainval', 'v1.0-test', 'v1.0-mini']
     assert version in available_vers
     if version == 'v1.0-trainval':
+        # 获取train对应的场景名
         train_scenes = splits.train
+        # 获取val对应的场景名
         val_scenes = splits.val
     elif version == 'v1.0-test':
         train_scenes = splits.test
@@ -58,15 +60,20 @@ def create_nuscenes_infos(root_path,
         raise ValueError('unknown')
 
     # filter existing scenes.
+    #列表，包含N个有效场景对应的字典
     available_scenes = get_available_scenes(nusc)
+    #将train_scenes中有效scene组成train_scenes_names ，如：list --> ['scene-0001', 'scene-0002',..., 'scene-n']
     available_scene_names = [s['name'] for s in available_scenes]
+    #filter函数用于过滤序列，过滤掉不符合条件的元素，返回由符合条件元素组成的新列表
     train_scenes = list(
         filter(lambda x: x in available_scene_names, train_scenes))
     val_scenes = list(filter(lambda x: x in available_scene_names, val_scenes))
+    # 列表，包含训练集中有效场景对应的token
     train_scenes = set([
         available_scenes[available_scene_names.index(s)]['token']
         for s in train_scenes
     ])
+    # 列表，包含验证集中有效场景对应的token
     val_scenes = set([
         available_scenes[available_scene_names.index(s)]['token']
         for s in val_scenes
@@ -100,7 +107,7 @@ def create_nuscenes_infos(root_path,
                                  '{}_infos_val.pkl'.format(info_prefix))
         mmcv.dump(data, info_val_path)
 
-
+#获取有效场景
 def get_available_scenes(nusc):
     """Get available scenes from the input nuscenes class.
 
@@ -117,14 +124,20 @@ def get_available_scenes(nusc):
     available_scenes = []
     print('total scene num: {}'.format(len(nusc.scene)))
     for scene in nusc.scene:
+        # 获取scenes的token，##每个场景对应一个token
         scene_token = scene['token']
+        # 根据token获取scene的record，rec代表record
         scene_rec = nusc.get('scene', scene_token)
+        # 获取该scene下第一个sample的record
         sample_rec = nusc.get('sample', scene_rec['first_sample_token'])
+        # 获取该sample下的Lidar Data的record
         sd_rec = nusc.get('sample_data', sample_rec['data']['LIDAR_TOP'])
         has_more_frames = True
         scene_not_exist = False
         while has_more_frames:
+            # 根据激光雷达token得到对应的路径，以及boxes数据
             lidar_path, boxes, _ = nusc.get_sample_data(sd_rec['token'])
+            # 关注能不能拿到lidar路径，如果拿到则当前scene为有效，加入available_scenes，最终最为返回
             lidar_path = str(lidar_path)
             if os.getcwd() in lidar_path:
                 # path from lyftdataset is absolute path
@@ -164,6 +177,8 @@ def _fill_trainval_infos(nusc,
     train_nusc_infos = []
     val_nusc_infos = []
 
+    #遍历每一个sample,并依次拿取需要的数据
+    #mmcv.track_iter_progress刷新位置的进度条方式
     for sample in mmcv.track_iter_progress(nusc.sample):
         lidar_token = sample['data']['LIDAR_TOP']
         sd_rec = nusc.get('sample_data', sample['data']['LIDAR_TOP'])

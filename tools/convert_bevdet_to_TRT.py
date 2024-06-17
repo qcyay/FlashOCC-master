@@ -307,6 +307,7 @@ def main():
     if not os.path.exists(args.work_dir):
         os.makedirs(args.work_dir)
 
+    # 加载自定义的TensorRT插件
     load_tensorrt_plugin()
     assert 'bev_pool_v2' in get_plugin_names(), \
         'bev_pool_v2 is not in the plugin list of tensorrt, ' \
@@ -320,10 +321,13 @@ def main():
         model_prefix = model_prefix + '_int8'
     elif args.fp16:
         model_prefix = model_prefix + '_fp16'
+    # Config类用于操作配置文件，它支持从多种文件格式中加载配置，包括python，json和yaml
+    # 对于所有格式的配置文件, 都支持继承。为了重用其他配置文件的字段，需要指定__base__
     cfg = Config.fromfile(args.config)
     cfg.model.pretrained = None
     cfg.model.type = cfg.model.type + 'TRT'
 
+    # 修改一些文件以保持配置的兼容性
     cfg = compat_cfg(cfg)
     cfg.gpu_ids = [0]
 
@@ -335,11 +339,14 @@ def main():
                 plugin_dir = cfg.plugin_dir
                 _module_dir = os.path.dirname(plugin_dir)
                 _module_dir = _module_dir.split('/')
+                # projects
                 _module_path = _module_dir[0]
 
                 for m in _module_dir[1:]:
+                    # projects.mmdet3d_plugin
                     _module_path = _module_path + '.' + m
                 print(_module_path)
+                # 导入一个模块
                 plg_lib = importlib.import_module(_module_path)
             else:
                 # import dir is the dirpath for the config file
@@ -351,6 +358,7 @@ def main():
                 plg_lib = importlib.import_module(_module_path)
 
     # build the dataloader
+    # 测试时默认一个GPU处理一张图像，故对于单GPU, 测试时batch size=1
     test_dataloader_default_args = dict(
         samples_per_gpu=1, workers_per_gpu=2, dist=False, shuffle=False)
 
@@ -391,7 +399,10 @@ def main():
     model.eval()
 
     for i, data in enumerate(data_loader):
+        #TODO 这里需要搞清楚数据格式
+        #列表，包含7个元素
         inputs = [t.cuda() for t in data['img_inputs'][0]]
+        # breakpoint()
         if model.__class__.__name__ in ['FBOCCTRT', 'FBOCC2DTRT']:
             metas = model.get_bev_pool_input(inputs, img_metas=data['img_metas'])
         else:

@@ -1,3 +1,5 @@
+/vis/*
+/.idea/*
 /ckpts/
 *.o
 *.so

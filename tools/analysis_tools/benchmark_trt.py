@@ -116,6 +116,7 @@ def get_plugin_names():
 
 def main():
 
+    #加载自定义的TensorRT插件
     load_tensorrt_plugin()
 
     args = parse_args()

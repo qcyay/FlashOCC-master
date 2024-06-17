@@ -27,19 +27,25 @@ class BEVDet(CenterPoint):
             x: (B, N, C, fH, fW)
             stereo_feat: (B*N, C_stereo, fH_stereo, fW_stereo) / None
         """
+        #尺寸为[B,N,3,H,W]
         imgs = img
         B, N, C, imH, imW = imgs.shape
+        #尺寸为[BN,3,H,W]
         imgs = imgs.view(B * N, C, imH, imW)
+        #元组，包含两个张量，x[0]，第三个Res Block输出的特征，尺寸为[BN,C,h,w]，x[1]，第四个Res Block输出的特征，尺寸为[BN,2C,h/2,w/2]
         x = self.img_backbone(imgs)
         stereo_feat = None
         if stereo:
             stereo_feat = x[0]
             x = x[1:]
         if self.with_img_neck:
+            #列表，包含一个张量，尺寸为[BN,256,h,w]
             x = self.img_neck(x)
             if type(x) in [list, tuple]:
+                #尺寸为[BN,256,h,w]
                 x = x[0]
         _, output_dim, ouput_H, output_W = x.shape
+        # 尺寸为[B,N,256,h,w]
         x = x.view(B, N, output_dim, ouput_H, output_W)
         return x, stereo_feat
 
@@ -51,7 +57,9 @@ class BEVDet(CenterPoint):
         Returns:
             x: (B, C', 2*Dy, 2*Dx)
         """
+        #列表，包含3个BEV特征，特征尺寸为[B,2C,Dy/2,Dx/2]、[B,4C,Dy/4,Dx/4]和[B,8C,Dy/8,Dx/8]
         x = self.img_bev_encoder_backbone(x)
+        #尺寸为[B,C',Dy,Dx]
         x = self.img_bev_encoder_neck(x)
         if type(x) in [list, tuple]:
             x = x[0]
@@ -59,25 +67,45 @@ class BEVDet(CenterPoint):
 
     def prepare_inputs(self, inputs):
         # split the inputs into each frame
-        assert len(inputs) == 7
+        assert len(inputs) == 7 or len(inputs) == 6
         B, N, C, H, W = inputs[0].shape
-        imgs, sensor2egos, ego2globals, intrins, post_rots, post_trans, bda = \
-            inputs
 
-        sensor2egos = sensor2egos.view(B, N, 4, 4)
-        ego2globals = ego2globals.view(B, N, 4, 4)
+        # imgs，环视图像，尺寸为[B,N,C,H,W]，sensor2egos，相机到自车坐标系的变换矩阵，尺寸为[B,N,4,4]，ego2globals，自车到全局坐标系的变换矩阵，尺寸为[B,N,4,4]
+        # intrins，内参矩阵，尺寸为[B,N,3,3]，post_rots，图像增广旋转，尺寸为[B,N,3,3]，post_trans，图像增广平移，尺寸为[B,N,3]，bda，BEV增广矩阵，尺寸为[B,3,3]
+        imgs, sensor2egos, ego2globals, intrins, post_rots, post_trans = inputs[:6]
+        if len(inputs) == 7:
+            bda = inputs[6]
+        elif len(inputs) == 6:
+            bda = torch.eye(3).to(imgs.device)
 
-        # calculate the transformation from adj sensor to key ego
-        keyego2global = ego2globals[:, 0,  ...].unsqueeze(1)    # (B, 1, 4, 4)
-        global2keyego = torch.inverse(keyego2global.double())   # (B, 1, 4, 4)
-        sensor2keyegos = \
-            global2keyego @ ego2globals.double() @ sensor2egos.double()     # (B, N_views, 4, 4)
-        sensor2keyegos = sensor2keyegos.float()
+        #如果变量ego2globals值不为None，则利用ego2globals计算所有相机到关键自车坐标系的变换矩阵，从而使得相机到自车坐标系的变换矩阵更加精确
+        if inputs[2] is not None:
+            #尺寸为[B,N,4,4]
+            sensor2egos = sensor2egos.view(B, N, 4, 4)
+            #尺寸为[B,N,4,4]
+            ego2globals = ego2globals.view(B, N, 4, 4)
+
+            # calculate the transformation from adj sensor to key ego
+            #尺寸为[B,1,4,4]
+            keyego2global = ego2globals[:, 0,  ...].unsqueeze(1)    # (B, 1, 4, 4)
+            #全局坐标系到自车的变换矩阵，尺寸为[B,1,4,4]
+            global2keyego = torch.inverse(keyego2global.double())   # (B, 1, 4, 4)
+            # @表示矩阵乘法
+            # R_s2k = R_g2k @ R_e2g @ R_s2e
+            # 相机到关键自车坐标系的变换矩阵，尺寸为[B,N,4,4]
+            sensor2keyegos = \
+                global2keyego @ ego2globals.double() @ sensor2egos.double()     # (B, N_views, 4, 4)
+            # breakpoint()
+            #尺寸为[B,N,4,4]
+            sensor2keyegos = sensor2keyegos.float()
+        else:
+            sensor2keyegos = sensor2egos
 
         return [imgs, sensor2keyegos, ego2globals, intrins,
                 post_rots, post_trans, bda]
 
     def extract_img_feat(self, img_inputs, img_metas, **kwargs):
+
         """ Extract features of images.
         img_inputs:
             imgs:  (B, N_views, 3, H, W)
@@ -91,11 +119,16 @@ class BEVDet(CenterPoint):
             x: [(B, C', H', W'), ]
             depth: (B*N, D, fH, fW)
         """
+        # img_inputs，处理后的输入，列表，包含7个元素，imgs，环视图像，尺寸为[B,N,C,H,W]，sensor2keyegos，相机到关键自车坐标系的变换矩阵，尺寸为[B,N,4,4]，ego2globals，自车到全局坐标系的变换矩阵，尺寸为[B,N,4,4]
+        # intrins，内参矩阵，尺寸为[B,N,3,3]，post_rots，图像增广旋转，尺寸为[B,N,3,3]，post_trans，图像增广平移，尺寸为[B,N,3]，bda，BEV增广矩阵，尺寸为[3,3]
         img_inputs = self.prepare_inputs(img_inputs)
+        #尺寸为[B,N,256,h,w]
         x, _ = self.image_encoder(img_inputs[0])    # x: (B, N, C, fH, fW)
+        #x，鸟瞰图特征，尺寸为[B,C,Dy,Dx]，depth，特征图每个位置深度的概率，尺寸为[BN,D,fH,fW]
         x, depth = self.img_view_transformer([x] + img_inputs[1:7])
         # x: (B, C, Dy, Dx)
         # depth: (B*N, D, fH, fW)
+        #尺寸为[B,C',Dy,Dx]
         x = self.bev_encoder(x)
         return [x], depth
 
@@ -113,6 +146,7 @@ class BEVDet(CenterPoint):
                 post_trans:  (B, N_views, 3)
                 bda_rot:  (B, 3, 3)
         """
+        #img_feats，列表，包含1个表示BEV特征的张量，尺寸为[B,C',Dy,Dx]，depth，特征图每个位置深度的概率，尺寸为[BN,D,fH,fW]
         img_feats, depth = self.extract_img_feat(img_inputs, img_metas, **kwargs)
         pts_feats = None
         return img_feats, pts_feats, depth

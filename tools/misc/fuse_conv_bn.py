@@ -28,6 +28,7 @@ def fuse_module(m):
     last_conv = None
     last_conv_name = None
 
+    #named_children返回包含子模块的迭代器，同时产生模块的名称以及模块本身
     for name, child in m.named_children():
         if isinstance(child, (nn.BatchNorm2d, nn.SyncBatchNorm)):
             if last_conv is None:  # only fuse BN that is after Conv
@@ -35,12 +36,14 @@ def fuse_module(m):
             fused_conv = fuse_conv_bn(last_conv, child)
             m._modules[last_conv_name] = fused_conv
             # To reduce changes, set BN as Identity instead of deleting it.
+            #nn.Identity直接传递输入数据而不进行任何变换
             m._modules[name] = nn.Identity()
             last_conv = None
         elif isinstance(child, nn.Conv2d):
             last_conv = child
             last_conv_name = name
         else:
+            #递归地对模型中的Conv层和BN层进行融合
             fuse_module(child)
     return m
 

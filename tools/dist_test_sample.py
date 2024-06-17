@@ -1,7 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import argparse
+import sys
 import os
 import warnings
+sys.path.append(os.getcwd())
+# print(sys.path)
 
 import mmcv
 import torch
@@ -17,6 +20,7 @@ from mmdet3d.datasets import build_dataloader, build_dataset
 from mmdet3d.models import build_model
 from mmdet.apis import multi_gpu_test, set_random_seed
 from mmdet.datasets import replace_ImageToTensor
+from mmdet3d.datasets.pipelines import Compose
 
 if mmdet.__version__ > '2.23.0':
     # If mmdet version > 2.23.0, setup_multi_processes would be imported and
@@ -33,6 +37,8 @@ except ImportError:
     from mmdet3d.utils import compat_cfg
 
 warnings.filterwarnings('ignore')
+
+# 利用MMDetection提供的并行化的方式对样本进行测试
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -137,10 +143,8 @@ def parse_args():
         args.eval_options = args.options
     return args
 
-
 def main():
     args = parse_args()
-
     assert args.out or args.eval or args.format_only or args.show \
         or args.show_dir, \
         ('Please specify at least one operation (save/eval/format/show the '
@@ -153,7 +157,7 @@ def main():
     if args.out is not None and not args.out.endswith(('.pkl', '.pickle')):
         raise ValueError('The output file must be a pkl file.')
 
-    # 加载配置文件
+    #加载配置文件
     #Config类用于操作配置文件，它支持从多种文件格式中加载配置，包括python，json和yaml
     #对于所有格式的配置文件, 都支持继承。为了重用其他配置文件的字段，需要指定__base__
     cfg = Config.fromfile(args.config)
@@ -162,10 +166,6 @@ def main():
 
     #修改一些文件以保持配置的兼容性
     cfg = compat_cfg(cfg)
-
-    # set multi-process settings
-    #设置多进程并行环境变量
-    setup_multi_processes(cfg)
 
     # 导入模块并初始化自定义的类
     # import modules from plguin/xx, registry will be updated
@@ -203,13 +203,8 @@ def main():
 
     cfg.model.pretrained = None
 
-    #用于测试的GPU序号
     if args.gpu_ids is not None:
         cfg.gpu_ids = args.gpu_ids[0:1]
-        warnings.warn('`--gpu-ids` is deprecated, please use `--gpu-id`. '
-                      'Because we only support single GPU mode in '
-                      'non-distributed testing. Use the first GPU '
-                      'in `gpu_ids` now.')
     else:
         cfg.gpu_ids = [args.gpu_id]
 
@@ -221,87 +216,56 @@ def main():
         distributed = True
         init_dist(args.launcher, **cfg.dist_params)
 
-    # 测试数据加载器参数
-    # 测试时默认一个GPU处理一张图像，故对于单GPU, 测试时batch size=1
-    test_dataloader_default_args = dict(
-        samples_per_gpu=1, workers_per_gpu=2, dist=distributed, shuffle=False)
-
-    # in case the test dataset is concatenated
-    if isinstance(cfg.data.test, dict):
-        cfg.data.test.test_mode = True
-        if cfg.data.test_dataloader.get('samples_per_gpu', 1) > 1:
-            # Replace 'ImageToTensor' to 'DefaultFormatBundle'
-            cfg.data.test.pipeline = replace_ImageToTensor(
-                cfg.data.test.pipeline)
-    elif isinstance(cfg.data.test, list):
-        for ds_cfg in cfg.data.test:
-            ds_cfg.test_mode = True
-        if cfg.data.test_dataloader.get('samples_per_gpu', 1) > 1:
-            for ds_cfg in cfg.data.test:
-                ds_cfg.pipeline = replace_ImageToTensor(ds_cfg.pipeline)
-
-    test_loader_cfg = {
-        **test_dataloader_default_args,
-        **cfg.data.get('test_dataloader', {})
-    }
-
-    #设置随机化种子
-    # set random seeds
-    if args.seed is not None:
-        set_random_seed(args.seed, deterministic=args.deterministic)
-
-    # build the dataloader
-    # class 'projects.mmdet3d_plugin.datasets.nuscenes_dataset_occ.NuScenesDatasetOccpancy'
-    # 包括img_metas、points和img_inputs
-    dataset = build_dataset(cfg.data.test)
-    # data_loader迭代器，用于多线程地读取数据，并实现batch以及shuffle的读取等
-    data_loader = build_dataloader(dataset, **test_loader_cfg)
+    cfg.data.test.test_mode = True
 
     # build the model and load checkpoint
-    if not args.no_aavt:
-        if '4D' in cfg.model.type:
-            cfg.model.align_after_view_transfromation=True
     cfg.model.train_cfg = None
-    #构建模型
     model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'))
-    fp16_cfg = cfg.get('fp16', None)
-    if fp16_cfg is not None:
-        wrap_fp16_model(model)
-    # 加载预训练模型参数
     checkpoint = load_checkpoint(model, args.checkpoint, map_location='cpu')
-    if args.fuse_conv_bn:
-        model = fuse_conv_bn(model)
-    # old versions did not save class info in checkpoints, this walkaround is
-    # for backward compatibility
-    if 'CLASSES' in checkpoint.get('meta', {}):
-        model.CLASSES = checkpoint['meta']['CLASSES']
-    else:
-        model.CLASSES = dataset.CLASSES
-    # palette for visualization in segmentation tasks
-    if 'PALETTE' in checkpoint.get('meta', {}):
-        model.PALETTE = checkpoint['meta']['PALETTE']
-    elif hasattr(dataset, 'PALETTE'):
-        # segmentation dataset has `PALETTE` attribute
-        model.PALETTE = dataset.PALETTE
+    model.CLASSES = cfg.class_names
 
-    #测试
+    # 所有测试数据的标注文件
+    data = mmcv.load(cfg.test_data_config.ann_file, file_format='pkl')
+    # 将数据信息按时间戳顺序排列
+    data_infos = list(sorted(data['infos'], key=lambda e: e['timestamp']))
+    # 标注信息
+    info = data_infos[0]
+    input_dict = dict(curr=info)
+    pipeline = cfg.test_pipeline
+    pipeline = Compose(pipeline)
+    # 键值包括img_inputs和img_metas
+    data = pipeline(input_dict)
+
+    #配置文件中测试预处理流程直接调用Collect3D时，需要将数据格式进行额外的处理
+    if isinstance(data['img_inputs'], tuple):
+        for key in data.keys():
+            data[key] = [data[key]]
+        data['img_metas'] = [None]
+
+    img_inputs = list(data['img_inputs'][0])
+    for i, t in enumerate(img_inputs):
+        img_inputs[i] = t.unsqueeze(0)
+    data['img_inputs'][0] = tuple(img_inputs)
+    # print(data['img_inputs'][0][0].size())
+
     if not distributed:
         model = MMDataParallel(model, device_ids=cfg.gpu_ids)
-        # breakpoint()
-        #输出结果并将结果保存
-        outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
+        model.eval()
+        with torch.no_grad():
+            result = model(return_loss=False, rescale=True, **data)
+            print(result[0].shape)
+            # print(result[0])
+
+        # outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
     else:
         model = MMDistributedDataParallel(
             model.cuda(),
             device_ids=[torch.cuda.current_device()],
             broadcast_buffers=False)
-        #列表，包含N个占用预测数组，尺寸为[200,200,16]
         outputs = multi_gpu_test(model, data_loader, args.tmpdir,
                                  args.gpu_collect)
-        # breakpoint()
 
     rank, _ = get_dist_info()
-    # breakpoint()
     if rank == 0:
         if args.out:
             print(f'\nwriting results to {args.out}')
@@ -318,10 +282,7 @@ def main():
             ]:
                 eval_kwargs.pop(key, None)
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
-            # breakpoint()
             print(dataset.evaluate(outputs, **eval_kwargs))
-        if args.show_dir:
-            dataset.save_pred(outputs, show_dir=args.show_dir)
 
 
 if __name__ == '__main__':

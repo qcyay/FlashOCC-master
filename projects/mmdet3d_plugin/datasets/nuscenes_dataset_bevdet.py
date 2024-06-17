@@ -152,7 +152,9 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
             filter_empty_gt=filter_empty_gt,
             test_mode=test_mode)
 
+        #with_velocity=True
         self.with_velocity = with_velocity
+        #'detection_cvpr_2019'
         self.eval_version = eval_version
         from nuscenes.eval.detection.config import config_factory
         self.eval_detection_configs = config_factory(self.eval_version)
@@ -164,10 +166,13 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
                 use_map=False,
                 use_external=False,
             )
-
+        # 'bevdet'
         self.img_info_prototype = img_info_prototype
+        # None
         self.multi_adj_frame_id_cfg = multi_adj_frame_id_cfg
+        # 'CAM_FRONT'
         self.ego_cam = ego_cam
+        # False
         self.stereo = stereo
 
     def get_cat_ids(self, idx):
@@ -203,10 +208,16 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
         Returns:
             list[dict]: List of annotations sorted by timestamps.
         """
+        #mmcv.load从文件中读取数据
+        #键值dict_keys(['infos', 'metadata'])
         data = mmcv.load(ann_file, file_format='pkl')
+        #根据时间戳对数据进行排序
+        #data_infos包含N个字典，每个字典的键值为dict_keys(['lidar_path', 'token', 'sweeps', 'cams', 'lidar2ego_translation', 'lidar2ego_rotation', 'ego2global_translation', 'ego2global_rotation', 'timestamp', 'gt_boxes', 'gt_names', 'gt_velocity', 'num_lidar_pts', 'num_radar_pts', 'valid_flag', 'ann_infos', 'scene_token', 'scene_name', 'occ_path'])
         data_infos = list(sorted(data['infos'], key=lambda e: e['timestamp']))
         data_infos = data_infos[::self.load_interval]
+        #{'version': 'v1.0-mini'}
         self.metadata = data['metadata']
+        #v1.0-mini
         self.version = self.metadata['version']
         return data_infos
 
@@ -229,6 +240,7 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
                     from lidar to different cameras.
                 - ann_info (dict): Annotation info.
         """
+        #键值dict_keys(['lidar_path', 'token', 'sweeps', 'cams', 'lidar2ego_translation', 'lidar2ego_rotation', 'ego2global_translation', 'ego2global_rotation', 'timestamp', 'gt_boxes', 'gt_names', 'gt_velocity', 'num_lidar_pts', 'num_radar_pts', 'valid_flag', 'ann_infos', 'scene_token', 'scene_name', 'occ_path'])
         info = self.data_infos[index]
         # standard protocol modified from SECOND.Pytorch
         input_dict = dict(
@@ -243,21 +255,29 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
             if self.img_info_prototype == 'mmcv':
                 image_paths = []
                 lidar2img_rts = []
+                #info['cams']键值dict_keys(['CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_FRONT_LEFT', 'CAM_BACK', 'CAM_BACK_LEFT', 'CAM_BACK_RIGHT'])
                 for cam_type, cam_info in info['cams'].items():
+                    # 图像路径
+                    # data/nuscenes/samples/CAM_FRONT/n008-2018-08-01-15-16-36-0400__CAM_FRONT__1533151603512404.jpg
                     image_paths.append(cam_info['data_path'])
                     # obtain lidar to image transformation matrix
+                    # 雷达坐标系点变换到相机坐标系点旋转矩阵
                     lidar2cam_r = np.linalg.inv(
                         cam_info['sensor2lidar_rotation'])
+                    # TODO 原理
+                    # 雷达坐标系点变换到相机坐标系点平移矩阵
                     lidar2cam_t = cam_info[
                         'sensor2lidar_translation'] @ lidar2cam_r.T
                     lidar2cam_rt = np.eye(4)
                     lidar2cam_rt[:3, :3] = lidar2cam_r.T
                     lidar2cam_rt[3, :3] = -lidar2cam_t
+                    #相机内参矩阵
                     intrinsic = cam_info['cam_intrinsic']
                     viewpad = np.eye(4)
                     viewpad[:intrinsic.shape[0], :intrinsic.
                             shape[1]] = intrinsic
                     lidar2img_rt = (viewpad @ lidar2cam_rt.T)
+                    # 雷达到图像坐标系的变换矩阵
                     lidar2img_rts.append(lidar2img_rt)
 
                 input_dict.update(
@@ -271,6 +291,7 @@ class NuScenesDatasetBEVDet(Custom3DDataset):
                     input_dict['ann_info'] = annos
             else:
                 assert 'bevdet' in self.img_info_prototype
+                #键值dict_keys(['sample_idx', 'pts_filename', 'sweeps', 'timestamp', 'ann_infos', 'curr'])，其中curr为所有注释信息
                 input_dict.update(dict(curr=info))
                 if '4d' in self.img_info_prototype:     # 需要再读取历史帧的信息
                     info_adj_list = self.get_adj_info(info, index)

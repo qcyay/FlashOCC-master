@@ -4,7 +4,7 @@ _base_ = ['../../../mmdetection3d/configs/_base_/datasets/nus-3d.py',
 
 plugin = True
 plugin_dir = 'projects/mmdet3d_plugin/'
-point_cloud_range = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+point_cloud_range = [-40, -40, -1, 40, 40, 5.4]
 # For nuScenes we usually do 10-class detection
 class_names = [
     'car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier',
@@ -13,13 +13,12 @@ class_names = [
 
 data_config = {
     'cams': [
-        'CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_BACK_LEFT',
-        'CAM_BACK', 'CAM_BACK_RIGHT'
+        'CAM_FRONT', 'CAM_FRONT_LEFT', 'CAM_FRONT_RIGHT'
     ],
     'Ncams':
-    6,
+    3,
     'input_size': (256, 704),
-    'src_size': (900, 1600),
+    'src_size': (2160, 3840),
 
     # Augmentation
     'resize': (-0.06, 0.11),
@@ -98,7 +97,7 @@ model = dict(
 
 # Data
 dataset_type = 'NuScenesDatasetOccpancy'
-data_root = 'data/nuscenes/'
+data_root = 'data/car_0604'
 file_client_args = dict(backend='disk')
 
 bda_aug_conf = dict(
@@ -133,31 +132,17 @@ train_pipeline = [
                                 'mask_lidar', 'mask_camera'])
 ]
 
-# 在projects/mmdet3d_plugin和mmdetection3d/mmdet3d的datasets/pipelines/loading.py函数中定义了数据预处理的方式
 test_pipeline = [
     dict(type='PrepareImageInputs', data_config=data_config, sequential=False),
-    dict(
-        type='LoadAnnotationsBEVDepth',
-        bda_aug_conf=bda_aug_conf,
-        classes=class_names,
-        is_train=False),
-    dict(
-        type='LoadPointsFromFile',
-        coord_type='LIDAR',
-        load_dim=5,
-        use_dim=5,
-        file_client_args=file_client_args),
+    # 直接对图像进行测试时可用
+    # dict(type='Collect3D', keys=['img_inputs'])
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(1333, 800),
         pts_scale_ratio=1,
         flip=False,
         transforms=[
-            dict(
-                type='DefaultFormatBundle3D',
-                class_names=class_names,
-                with_label=False),
-            dict(type='Collect3D', keys=['points', 'img_inputs'])
+            dict(type='Collect3D', keys=['img_inputs'])
         ])
 ]
 
@@ -181,14 +166,14 @@ share_data_config = dict(
 
 test_data_config = dict(
     pipeline=test_pipeline,
-    ann_file=data_root + 'bevdetv2-nuscenes_infos_val.pkl')
+    ann_file=data_root + 'nuscenes_infos_val.pkl')
 
 data = dict(
     samples_per_gpu=4,
     workers_per_gpu=4,
     train=dict(
         data_root=data_root,
-        ann_file=data_root + 'bevdetv2-nuscenes_infos_train.pkl',
+        ann_file=data_root + 'nuscenes_infos_train.pkl',
         pipeline=train_pipeline,
         classes=class_names,
         test_mode=False,
@@ -225,7 +210,6 @@ load_from = "ckpts/bevdet-r50-cbgs.pth"
 # fp16 = dict(loss_scale='dynamic')
 evaluation = dict(interval=1, start=20, pipeline=test_pipeline)
 checkpoint_config = dict(interval=1, max_keep_ckpts=5)
-
 
 # with det pretrain; use_mask=True; out_dim=256,
 # ===> per class IoU of 6019 samples:

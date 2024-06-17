@@ -143,8 +143,6 @@ class PrepareImageInputs(object):
         #测试时调整图像大小并进行裁剪，训练时还会对图像进行翻转和旋转
         img = self.img_transform_core(img, resize_dims, crop, flip, rotate)
 
-        #TODO 搞清楚这里得到单应性变换矩阵的原理
-
         # post-homography transformation
         # 将上述变换以矩阵表示.
         post_rot *= resize
@@ -183,20 +181,15 @@ class PrepareImageInputs(object):
         sensor2ego[:3, -1] = sensor2ego_tran
 
         # ego to global
-        if info['cams'][cam_name].__contains__('ego2global_rotation'):
-            w, x, y, z = info['cams'][cam_name]['ego2global_rotation']      # 四元数格式
-            ego2global_rot = torch.Tensor(
-                Quaternion(w, x, y, z).rotation_matrix)     # (3, 3)
-            ego2global_tran = torch.Tensor(
-                info['cams'][cam_name]['ego2global_translation'])   # (3, )
-            ego2global = ego2global_rot.new_zeros((4, 4))
-            ego2global[3, 3] = 1
-            ego2global[:3, :3] = ego2global_rot
-            ego2global[:3, -1] = ego2global_tran
-        else:
-            #如果相机属性对应的字典里不包括自车到全局坐标系的变换矩阵，则该变量值为None
-            ego2global = None
-
+        w, x, y, z = info['cams'][cam_name]['ego2global_rotation']      # 四元数格式
+        ego2global_rot = torch.Tensor(
+            Quaternion(w, x, y, z).rotation_matrix)     # (3, 3)
+        ego2global_tran = torch.Tensor(
+            info['cams'][cam_name]['ego2global_translation'])   # (3, )
+        ego2global = ego2global_rot.new_zeros((4, 4))
+        ego2global[3, 3] = 1
+        ego2global[:3, :3] = ego2global_rot
+        ego2global[:3, -1] = ego2global_tran
         return sensor2ego, ego2global
 
     def get_inputs(self, results, flip=None, scale=None):
@@ -240,13 +233,9 @@ class PrepareImageInputs(object):
             post_rot = torch.eye(2)
             post_tran = torch.zeros(2)
             # 当前相机内参
-            if cam_data.__contains__('cam_intrinsic'):
-                intrin = torch.Tensor(cam_data['cam_intrinsic'])
-            elif cam_data.__contains__('camera_intrinsics'):
-                intrin = torch.Tensor(cam_data['camera_intrinsics'])
+            intrin = torch.Tensor(cam_data['cam_intrinsic'])
 
             # 获取当前相机的sensor2ego(4x4), ego2global(4x4)矩阵.
-            # 当相机属性对应的字典里不包括自车到全局坐标系的变换矩阵时，变量ego2global值为None
             sensor2ego, ego2global = \
                 self.get_sensor_transforms(results['curr'], cam_name)
 
@@ -301,7 +290,7 @@ class PrepareImageInputs(object):
             # 调整图像大小对应的旋转矩阵，列表，包含N个tensor，尺寸为[3，3]
             post_rots.append(post_rot)          # 图像增广旋转 (3, 3)
             # 调整图像大小对应的平移矩阵，列表，包含N个tensor，尺寸为[3]
-            post_trans.append(post_tran)        # 图像增广平移 (3, )
+            post_trans.append(post_tran)        # 图像增广平移 (3, ）
 
         if self.sequential:
             for adj_info in results['adjacent']:
@@ -319,10 +308,7 @@ class PrepareImageInputs(object):
 
         imgs = torch.stack(imgs)    # (N_views, 3, H, W)        # N_views = 6 * (N_history + 1)
         sensor2egos = torch.stack(sensor2egos)      # (N_views, 4, 4)
-        if ego2globals[0] is not None:
-            ego2globals = torch.stack(ego2globals)      # (N_views, 4, 4)
-        else:
-            ego2globals = None
+        ego2globals = torch.stack(ego2globals)      # (N_views, 4, 4)
         intrins = torch.stack(intrins)              # (N_views, 3, 3)
         post_rots = torch.stack(post_rots)          # (N_views, 3, 3)
         post_trans = torch.stack(post_trans)        # (N_views, 3)

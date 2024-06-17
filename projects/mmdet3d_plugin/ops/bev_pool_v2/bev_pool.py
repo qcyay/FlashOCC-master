@@ -16,12 +16,19 @@ class QuickCumsumCuda(torch.autograd.Function):
     @staticmethod
     def forward(ctx, depth, feat, ranks_depth, ranks_feat, ranks_bev,
                 bev_feat_shape, interval_starts, interval_lengths):
+        #点所属体素的索引
         ranks_bev = ranks_bev.int()     # (N_points, ),
+        #特征图每个位置各个深度的概率
         depth = depth.contiguous().float()  # (B, N, D, fH, fW)
+        #特征图每个位置的特征
         feat = feat.contiguous().float()    # (B, N, fH, fW, C)
+        # 在深度空间点的索引（通过该索引得到点的深度）
         ranks_depth = ranks_depth.contiguous().int()    # (N_points, ),
+        # 在特征空间点的索引（通过该索引得到点的特征）
         ranks_feat = ranks_feat.contiguous().int()      # (N_points, ),
+        #每个体素中点的起点索引（每个体素中可能有多个点）
         interval_lengths = interval_lengths.contiguous().int()  # (N_pillar, )
+        #每个体素中包含的点的数量
         interval_starts = interval_starts.contiguous().int()    # (N_pillar, )
 
         out = feat.new_zeros(bev_feat_shape)    # (B, D_Z, D_Y, D_X, C)

@@ -19,7 +19,7 @@ data_config = {
     'Ncams':
     6,
     'input_size': (256, 704),
-    'src_size': (900, 1600),
+    'src_size': (720, 1280),
 
     # Augmentation
     'resize': (-0.06, 0.11),
@@ -98,7 +98,7 @@ model = dict(
 
 # Data
 dataset_type = 'NuScenesDatasetOccpancy'
-data_root = 'data/nuscenes/'
+data_root = 'data/NuScenes-develop_hongqi1280/'
 file_client_args = dict(backend='disk')
 
 bda_aug_conf = dict(
@@ -133,31 +133,17 @@ train_pipeline = [
                                 'mask_lidar', 'mask_camera'])
 ]
 
-# 在projects/mmdet3d_plugin和mmdetection3d/mmdet3d的datasets/pipelines/loading.py函数中定义了数据预处理的方式
 test_pipeline = [
     dict(type='PrepareImageInputs', data_config=data_config, sequential=False),
-    dict(
-        type='LoadAnnotationsBEVDepth',
-        bda_aug_conf=bda_aug_conf,
-        classes=class_names,
-        is_train=False),
-    dict(
-        type='LoadPointsFromFile',
-        coord_type='LIDAR',
-        load_dim=5,
-        use_dim=5,
-        file_client_args=file_client_args),
+    # 直接对图像进行测试时可用
+    # dict(type='Collect3D', keys=['img_inputs'])
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(1333, 800),
         pts_scale_ratio=1,
         flip=False,
         transforms=[
-            dict(
-                type='DefaultFormatBundle3D',
-                class_names=class_names,
-                with_label=False),
-            dict(type='Collect3D', keys=['points', 'img_inputs'])
+            dict(type='Collect3D', keys=['img_inputs'])
         ])
 ]
 
@@ -181,14 +167,14 @@ share_data_config = dict(
 
 test_data_config = dict(
     pipeline=test_pipeline,
-    ann_file=data_root + 'bevdetv2-nuscenes_infos_val.pkl')
+    ann_file=data_root + 'nuscenes_infos_val.pkl')
 
 data = dict(
     samples_per_gpu=4,
     workers_per_gpu=4,
     train=dict(
         data_root=data_root,
-        ann_file=data_root + 'bevdetv2-nuscenes_infos_train.pkl',
+        ann_file=data_root + 'nuscenes_infos_train.pkl',
         pipeline=train_pipeline,
         classes=class_names,
         test_mode=False,

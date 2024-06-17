@@ -1,6 +1,7 @@
 import os
 
 import mmcv
+from mmcv import Config, DictAction
 import open3d as o3d
 import numpy as np
 import torch
@@ -10,7 +11,10 @@ from typing import Tuple, List, Dict, Iterable
 import argparse
 import cv2
 
-#适用于在含有占用栅格真值并以NuScenes格式组织的数据集上的对预测结果的可视化
+#适用于在不含有占用栅格真值并以NuScenes格式组织的数据集上的对预测结果的可视化
+
+IMAGE_HEIGHT = 900
+IMAGE_WIDTH = 1600
 
 NOT_OBSERVED = -1
 FREE = 0
@@ -29,16 +33,16 @@ TGT_POINT_CLOUD_RANGE = [-40, -40, -1, 40, 40, 5.4]
 colormap_to_colors = np.array(
     [
         [0,   0,   0, 255],  # 0 undefined
-        [112, 128, 144, 255],  # 1 barrier  orange
-        [220, 20, 60, 255],    # 2 bicycle  Blue
-        [255, 127, 80, 255],   # 3 bus  Darkslategrey
-        [255, 158, 0, 255],  # 4 car  Crimson
-        [233, 150, 70, 255],   # 5 cons. Veh  Orangered
-        [255, 61, 99, 255],  # 6 motorcycle  Darkorange
-        [0, 0, 230, 255], # 7 pedestrian  Darksalmon
-        [47, 79, 79, 255],  # 8 traffic cone  Red
-        [255, 140, 0, 255],# 9 trailer  Slategrey
-        [255, 99, 71, 255],# 10 truck Burlywood
+        [112, 128, 144, 255],  # 1 障碍物 barrier  orange
+        [220, 20, 60, 255],    # 2 自行车 bicycle  Blue
+        [255, 127, 80, 255],   # 3 bus 公共汽车 Darkslategrey
+        [255, 158, 0, 255],  # 4 car 汽车 Crimson
+        [233, 150, 70, 255],   # 5 cons. Veh 施工车辆 Orangered
+        [255, 61, 99, 255],  # 6 motorcycle 摩托车 Darkorange
+        [0, 0, 230, 255], # 7 pedestrian 行人 Darksalmon
+        [47, 79, 79, 255],  # 8 traffic cone 交通锥 Red
+        [255, 140, 0, 255],# 9 trailer 拖车 Slategrey
+        [255, 99, 71, 255],# 10 truck 卡车 Burlywood
         [0, 207, 191, 255],    # 11 drive sur  Green
         [175, 0, 75, 255],  # 12 other lat  nuTonomy green
         [75, 0, 75, 255],  # 13 sidewalk
@@ -260,6 +264,8 @@ def parse_args():
                                      'result of nuScenes')
     parser.add_argument(
         'res', help='Path to the predicted result')
+    # 配置文件路径
+    parser.add_argument('--config', default=None, help='test config file path')
     parser.add_argument(
         '--canva-size', type=int, default=1000, help='Size of canva in pixel')
     parser.add_argument(
@@ -309,9 +315,13 @@ def main():
     #保存占用预测结果路径
     results_dir = args.res
 
+    # 加载配置文件
+    # Config类用于操作配置文件，它支持从多种文件格式中加载配置，包括python，json和yaml
+    # 对于所有格式的配置文件, 都支持继承。为了重用其他配置文件的字段，需要指定__base__
+    cfg = Config.fromfile(args.config)
+
     # load dataset information
-    info_path = \
-        args.root_path + '/bevdetv2-nuscenes_infos_%s.pkl' % args.version
+    info_path = cfg.data.test.ann_file
     dataset = pickle.load(open(info_path, 'rb'))
     # prepare save path and medium
     #保存可视化结果路径
@@ -343,45 +353,40 @@ def main():
         if cnt % 10 == 0:
             print('%d/%d' % (cnt, min(args.vis_frames, len(dataset['infos']))))
 
-        #场景序号
-        scene_name = info['scene_name']
-        #样本数据标记
+        # 样本数据标记
         sample_token = info['token']
-
-        #占用栅格预测结果路径
-        pred_occ_path = os.path.join(results_dir, scene_name, sample_token, 'pred.npz')
-        #占用栅格真值路径
-        gt_occ_path = info['occ_path']
+        if info.__contains__('scene_name'):
+            #场景序号
+            scene_name = info['scene_name']
+            #占用栅格预测结果路径
+            pred_occ_path = os.path.join(results_dir, scene_name, sample_token, 'pred.npz')
+        else:
+            # 占用栅格预测结果路径
+            pred_occ_path = os.path.join(results_dir, sample_token, 'pred.npz')
 
         #占用栅格预测结果，尺寸为[Dx,Dy,Dz]
         pred_occ = np.load(pred_occ_path)['pred']
-        gt_data = np.load(os.path.join(args.root_path, gt_occ_path, 'labels.npz'))
-        #占用栅格真值，尺寸为[Dx,Dy,Dz]
-        voxel_label = gt_data['semantics']
-        #尺寸为[Dx,Dy,Dz]
-        lidar_mask = gt_data['mask_lidar']
-        #尺寸为[Dx,Dy,Dz]
-        camera_mask = gt_data['mask_camera']
 
         # load imgs
         #各视角图像，列表
         imgs = []
         for view in views:
-            img = cv2.imread(info['cams'][view]['data_path'])
+            if view in cfg.data_config['cams']:
+                img = cv2.imread(info['cams'][view]['data_path'])
+                img = cv2.resize(img, (IMAGE_WIDTH, IMAGE_HEIGHT))
+            else:
+                img = np.zeros((IMAGE_HEIGHT, IMAGE_WIDTH, 3), dtype=np.uint8)
             imgs.append(img)
 
         # occ_canvas
         #表示占据栅格是否被显示的标记，尺寸为[Dx,Dy,Dz]
+        camera_mask = np.ones(SPTIAL_SHAPE)
+        camera_mask[:,:,10:] = 0
         voxel_show = np.logical_and(pred_occ != FREE_LABEL, camera_mask)
         # voxel_show = pred_occ != FREE_LABEL
         voxel_size = VOXEL_SIZE
         vis = show_occ(torch.from_numpy(pred_occ), torch.from_numpy(voxel_show), voxel_size=voxel_size, vis=vis,
                        offset=[0, pred_occ.shape[0] * voxel_size[0] * 1.2 * 0, 0])
-
-        if args.draw_gt:
-            voxel_show = np.logical_and(voxel_label != FREE_LABEL, camera_mask)
-            vis = show_occ(torch.from_numpy(voxel_label), torch.from_numpy(voxel_show), voxel_size=voxel_size, vis=vis,
-                           offset=[0, voxel_label.shape[0] * voxel_size[0] * 1.2 * 1, 0])
 
         view_control = vis.get_view_control()
 
@@ -408,11 +413,6 @@ def main():
         #update_renderer用于更新当前的渲染器
         vis.update_renderer()
         # vis.run()
-
-        # if args.format == 'image':
-        #     out_dir = os.path.join(vis_dir, f'{scene_name}', f'{sample_token}')
-        #     mmcv.mkdir_or_exist(out_dir)
-        #     vis.capture_screen_image(os.path.join(out_dir, 'screen_occ.png'), do_render=True)
 
         #capture_screen_float_buffer捕获屏幕并将RGB存储在浮动缓冲区
         occ_canvas = vis.capture_screen_float_buffer(do_render=True)
@@ -443,7 +443,10 @@ def main():
                 w_begin:w_begin + canva_size, :] = occ_canvas_resize
 
         if args.format == 'image':
-            out_dir = os.path.join(vis_dir, f'{scene_name}', f'{sample_token}')
+            if info.__contains__('scene_name'):
+                out_dir = os.path.join(vis_dir, f'{scene_name}', f'{sample_token}')
+            else:
+                out_dir = os.path.join(vis_dir, f'{sample_token}')
             mmcv.mkdir_or_exist(out_dir)
             for i, img in enumerate(imgs):
                 cv2.imwrite(os.path.join(out_dir, f'img{i}.png'), img)
@@ -452,7 +455,8 @@ def main():
         elif args.format == 'video':
             cv2.putText(big_img, f'{cnt:{cnt}}', (5, 15), fontFace=cv2.FONT_HERSHEY_COMPLEX, color=(0, 0, 0),
                         fontScale=0.5)
-            cv2.putText(big_img, f'{scene_name}', (5, 35), fontFace=cv2.FONT_HERSHEY_COMPLEX, color=(0, 0, 0),
+            if info.__contains__('scene_name'):
+                cv2.putText(big_img, f'{scene_name}', (5, 35), fontFace=cv2.FONT_HERSHEY_COMPLEX, color=(0, 0, 0),
                         fontScale=0.5)
             cv2.putText(big_img, f'{sample_token[:5]}', (5, 55), fontFace=cv2.FONT_HERSHEY_COMPLEX, color=(0, 0, 0),
                         fontScale=0.5)
