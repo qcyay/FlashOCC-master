@@ -191,6 +191,7 @@ class LSSViewTransformer(BaseModule):
         #TODO 搞清楚这里的原理是什么
 
         # post-transformation
+        # P' = R @ P + T，P = R^(-1) @ (P' - T)
         # (D, fH, fW, 3) - (B, N, 1, 1, 1, 3) --> (B, N, D, fH, fW, 3)
         #尺寸为[B,N,D,fH,fW,3]
         points = self.frustum.to(sensor2ego) - post_trans.view(B, N, 1, 1, 1, 3)
