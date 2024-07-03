@@ -5,6 +5,7 @@ from mmcv import Config, DictAction
 import open3d as o3d
 import numpy as np
 import torch
+from pyquaternion import Quaternion
 import pickle
 import math
 from typing import Tuple, List, Dict, Iterable
@@ -83,10 +84,52 @@ def show_point_cloud(points: np.ndarray, colors=True, points_colors=None, bbox3d
 
     return vis
 
+#将点坐标转换到图像坐标系下，并得到有效的点序号（有效意味着点在相机朝向方向并落在图像范围内）
+#输出：points，投影后在图像范围内的点坐标，labels，保留的点的标签，camera_mask，点是否在图像范围内的掩码
+def point2pixels(pcd, intrinsic, sensor2ego, height, width, labels=None):
+
+    # 尺寸为[N,4]
+    pcd = np.insert(pcd, 3, 1, 1)
+    #尺寸为[3,4]
+    cam2img = np.zeros((3,4))
+    #尺寸为[3,4]
+    cam2img[:3,:3] = intrinsic
+    # #变换矩阵可参考文章Interactive Navigation in Environments with Traversable Obstacles Using Large Language and Vision-Language Models中公式2
+    # #自车到像素坐标系变换矩阵，尺寸为[3,4]
+    # combine = cam2img @ np.linalg.inv(sensor2ego)
+    #在相机坐标系下点齐次坐标，尺寸为[4,N]
+    pcd = np.linalg.inv(sensor2ego) @ pcd.T
+    #尺寸为[3,N]
+    points = cam2img @ pcd
+    #尺寸为[N,3]
+    points = points.T
+    #尺寸为[N,3]
+    points[:,:2] /= points[:,2:3]
+    #尺寸为[N,2]
+    points = points[:,:2]
+
+    #尺寸为[N]
+    camera_mask = (points[:, 0] >= 0) & (points[:, 0] < width) & (points[:, 1] >= 0) & (points[:, 1] < height) & (pcd[2, :] > 0)
+
+    #尺寸为[n]
+    idxs = np.where(camera_mask)[0]
+    #尺寸为[n,2]
+    points = points[idxs]
+    if labels is not None:
+        #尺寸为[n]
+        labels = labels.reshape(-1)[idxs]
+
+    return points, labels, camera_mask
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Visualize the points')
     parser.add_argument(
-        'res', help='Path to the files')
+        'data_root', help='Path to the files')
+    parser.add_argument(
+        '--scene_name',
+        type=str,
+        default='0',
+        help='The name of the scene')
     parser.add_argument(
         '--canva-size', type=int, default=1000, help='Size of canva in pixel')
     parser.add_argument(
@@ -100,6 +143,10 @@ def parse_args():
         default=4,
         help='Trade-off between image-view and bev in size of '
         'the visualized canvas')
+    parser.add_argument(
+        '--point_to_img',
+        action='store_true',
+        help='Whether to project the point cloud onto the image')
     parser.add_argument(
         '--save_path',
         type=str,
@@ -123,7 +170,7 @@ def main():
     args = parse_args()
     # load predicted results
     #保存占用预测结果路径
-    results_dir = args.res
+    root_dir = args.data_root
 
     # prepare save path and medium
     #保存可视化结果路径
@@ -147,7 +194,20 @@ def main():
     vis = o3d.visualization.VisualizerWithKeyCallback()
     vis.create_window()
 
-    lidar_filename_list = os.listdir(f'{results_dir}/lidar_concat')
+    lidar_filename_list = os.listdir(f'{root_dir}/sync_data/{args.scene_name}/lidar_concat')
+
+    if args.lidar_to_img:
+        # 读取参数文件
+        config_dict = {}
+        for cam in views:
+            config_dict[cam] = {}
+            file_path = f'{root_dir}/config/{cam}.json'
+            with open(file_path, 'r', encoding='utf-8') as file:
+                data = json.load(file)
+            config_dict[cam]['cam_intrinsic'] = np.array(data['intrinsic']).reshape(3, 3)
+            sensor2ego_rotation = np.array(data['rotation']).reshape(3, 3)
+            config_dict[cam]['sensor2ego_rotation'] = Quaternion(matrix=sensor2ego_rotation)
+            config_dict[cam]['sensor2ego_translation'] = np.array(data['translation'])
 
     for cnt, lidar_filename in enumerate(
             lidar_filename_list[:min(args.vis_frames, len(lidar_filename_list))]):
@@ -157,18 +217,28 @@ def main():
         sample_token = lidar_filename.split('.')[0]
 
         # 激光雷达点云数据保存路径
-        lidar_path = os.path.join(results_dir, 'lidar_concat', lidar_filename)
+        lidar_path = os.path.join(root_dir, 'sync_data', args.scene_name, 'lidar_concat', lidar_filename)
 
         #激光雷达点云
         pcd = o3d.io.read_point_cloud(lidar_path)
         # #设置点云颜色
         # pcd.paint_uniform_color([0, 0, 1])
+        if args.point_to_img:
+            #尺寸为[N,3]
+            points = np.asarray(pcd.points)
 
         # load imgs
         #各视角图像，列表
         imgs = []
         for view in views:
-            img = cv2.imread(f'{results_dir}/{view}/{sample_token}.jpg')
+            img = cv2.imread(f'{root_dir}/sync_data/{args.scene_name}/{view}/{sample_token}.jpg')
+            if args.point_to_img:
+                height, width = img.shape[:2]
+                #尺寸为[n,2]
+                points, _, _ = point2pixels(points, intrinsic, sensor2ego, height, width)
+                for point in points:
+                    center_coordinates = (int(point[0]), int(point[1]))
+                    cv2.circle(img, center_coordinates, radius=1, color=(255, 0, 0), thickness=-1)
             img = cv2.resize(img, (IMAGE_WIDTH, IMAGE_HEIGHT))
             imgs.append(img)
 
@@ -225,7 +295,7 @@ def main():
                 w_begin:w_begin + canva_size, :] = occ_canvas_resize
 
         if args.format == 'image':
-            out_dir = os.path.join(vis_dir, results_dir.split('/', 1)[1], sample_token)
+            out_dir = os.path.join(vis_dir, root_dir.split('/', 1)[1], args.scene_name, sample_token)
             mmcv.mkdir_or_exist(out_dir)
             for i, img in enumerate(imgs):
                 cv2.imwrite(os.path.join(out_dir, f'img{i}.png'), img)
