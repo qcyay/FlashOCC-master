@@ -11,6 +11,7 @@ import math
 from typing import Tuple, List, Dict, Iterable
 import argparse
 import cv2
+import json
 
 #对连续帧点云进行可视化
 
@@ -196,7 +197,7 @@ def main():
 
     lidar_filename_list = os.listdir(f'{root_dir}/sync_data/{args.scene_name}/lidar_concat')
 
-    if args.lidar_to_img:
+    if args.point_to_img:
         # 读取参数文件
         config_dict = {}
         for cam in views:
@@ -225,7 +226,7 @@ def main():
         # pcd.paint_uniform_color([0, 0, 1])
         if args.point_to_img:
             #尺寸为[N,3]
-            points = np.asarray(pcd.points)
+            all_points = np.asarray(pcd.points)
 
         # load imgs
         #各视角图像，列表
@@ -234,8 +235,14 @@ def main():
             img = cv2.imread(f'{root_dir}/sync_data/{args.scene_name}/{view}/{sample_token}.jpg')
             if args.point_to_img:
                 height, width = img.shape[:2]
+                intrinsic = config_dict[view]['cam_intrinsic']
+                sensor2ego = np.zeros((4, 4))
+                w, x, y, z = config_dict[view]['sensor2ego_rotation']  # 四元数格式
+                sensor2ego[:3, :3] = Quaternion(w, x, y, z).rotation_matrix  # (3, 3)
+                sensor2ego[:3, 3] = config_dict[view]['sensor2ego_translation']
+                sensor2ego[3, 3] = 1
                 #尺寸为[n,2]
-                points, _, _ = point2pixels(points, intrinsic, sensor2ego, height, width)
+                points, _, _ = point2pixels(all_points, intrinsic, sensor2ego, height, width)
                 for point in points:
                     center_coordinates = (int(point[0]), int(point[1]))
                     cv2.circle(img, center_coordinates, radius=1, color=(255, 0, 0), thickness=-1)
