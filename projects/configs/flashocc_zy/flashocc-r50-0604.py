@@ -28,6 +28,7 @@ data_config = {
     'resize_test': 0.00,
 }
 
+
 grid_config = {
     'x': [-40, 40, 0.4],
     'y': [-40, 40, 0.4],

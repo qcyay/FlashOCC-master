@@ -127,6 +127,7 @@ def add_ann_adj_info(extra_tag):
 
             scene = nuscenes.get('scene', sample['scene_token'])
             dataset['infos'][id]['scene_name'] = scene['name']
+            #添加占用栅格真值
             dataset['infos'][id]['occ_path'] = \
                 './data/nuscenes/gts/%s/%s'%(scene['name'], info['token'])
         with open('%s/%s_infos_%s.pkl' % (dataroot, extra_tag, set),
@@ -150,4 +151,5 @@ if __name__ == '__main__':
         max_sweeps=0)
 
     print('add_ann_infos')
+    #添加真值
     add_ann_adj_info(extra_tag)

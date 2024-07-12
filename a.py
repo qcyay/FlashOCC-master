@@ -10,8 +10,11 @@ from mmcv.runner import (get_dist_info, init_dist, load_checkpoint,
                          wrap_fp16_model)
 import torch
 from torchvision import models
+from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from nuscenes import NuScenes
+from nuscenes.utils.data_classes import LidarPointCloud
 import warnings
 # sys.path.append(os.getcwd())
 
@@ -382,3 +385,116 @@ warnings.filterwarnings('ignore')
 #             new_path = os.path.join(target_directory, mapping_dict[subdir])
 #             os.rename(old_path, new_path)
 #             print(f"目录 {old_path} 更名为 {new_path}")
+
+# #测试Nuscenes数据集读取方式
+# dataroot = 'data/nuscenes-mini/'
+# nusc = NuScenes(version='v1.0-mini', dataroot=dataroot, verbose=True)
+# scene = nusc.scene[0]
+# sample_token = scene['first_sample_token']
+# cur_sample = nusc.get('sample', sample_token)
+# lidar_data = nusc.get('sample_data', cur_sample['data']['LIDAR_TOP'])
+# pc = LidarPointCloud.from_file(nusc.dataroot+lidar_data['filename'])
+# lidar_path, boxes, _ = nusc.get_sample_data(cur_sample['data']['LIDAR_TOP'])
+# cs_record = nusc.get('calibrated_sensor', lidar_data['calibrated_sensor_token'])
+# pose_record = nusc.get('ego_pose', lidar_data['ego_pose_token'])
+# breakpoint()
+
+# #测试sklearn中KDTree用法
+# a = np.random.rand(10,3)
+# tree = KDTree(a)
+# b = np.random.rand(2,3)
+# dists, inds = tree.query(b, k=1)
+# print(dists)
+# print(inds)
+
+# #测试栅格中心坐标生成函数
+#
+# def get_grid_coords(dims, resolution):
+#     """
+#     :param dims: the dimensions of the grid [x, y, z] (i.e. [256, 256, 32])
+#     :return coords_grid: is the center coords of voxels in the grid
+#     """
+#
+#     g_xx = np.arange(0, dims[0] + 1)
+#     g_yy = np.arange(0, dims[1] + 1)
+#     g_zz = np.arange(0, dims[2] + 1)
+#
+#     # Obtaining the grid with coords...
+#     #np.meshgrid从坐标向量返回一个坐标矩阵的元组
+#     #xx，x轴坐标，尺寸为[512,512,40]，yy，y轴坐标，尺寸为[512,512,40]，zz，z轴坐标，尺寸为[512,512,40]
+#     xx, yy, zz = np.meshgrid(g_xx[:-1], g_yy[:-1], g_zz[:-1])
+#     #所有栅格的坐标，尺寸为[3,N]
+#     coords_grid = np.array([xx.flatten(), yy.flatten(), zz.flatten()]).T
+#     coords_grid = coords_grid.astype(np.float32)
+#
+#     #所有栅格中心点的坐标，尺寸为[3,N]
+#     coords_grid = (coords_grid * resolution) + resolution / 2
+#
+#     #尺寸为[3,N]
+#     temp = np.copy(coords_grid)
+#     temp[:, 0] = coords_grid[:, 1]
+#     temp[:, 1] = coords_grid[:, 0]
+#     coords_grid = np.copy(temp)
+#
+#     return coords_grid
+#
+# grid_coords = get_grid_coords([10, 20, 30], 0.2)
+
+# #读取点云数据并可视化
+#
+# filename = r'E:\工作有关\工作进度\占用网络部署\car_0604\sync_data\0\lidar_concat\000000.pcd'
+# # filename = r'data/car_0604/sync_data/0/lidar_concat/000000.pcd'
+# pcd = o3d.io.read_point_cloud(filename)
+# # print(pcd)
+# print(np.asarray(pcd.points).shape)
+# o3d.visualization.draw_geometries([pcd])
+# # 创建可视化窗口
+# # vis = o3d.visualization.Visualizer()
+# vis = o3d.visualization.VisualizerWithKeyCallback()
+# vis.create_window()
+
+# # 将点云添加到可视化窗口
+# vis.add_geometry(pcd)
+#
+# view_control = vis.get_view_control()
+#
+# look_at = np.array([-0.185, 0.513, 3.485])
+# front = np.array([-0.974, -0.055, 0.221])
+# up = np.array([0.221, 0.014, 0.975])
+# zoom = np.array([0.08])
+#
+# #set_lookat用于在OpenGL中设置观察矩阵的视点和目标
+# view_control.set_lookat(look_at)
+# #set_front用于设置物体在视图中的正面朝向
+# view_control.set_front(front) # set the positive direction of the x-axis toward you
+# #set_up设置可视化工具的向上向量
+# view_control.set_up(up) # set the positive direction of the x-axis as the up direction
+# #set_zoom用于设置视图控制器的缩放级别
+# view_control.set_zoom(zoom)
+#
+# # 设置背景颜色为白色（可选）
+# opt = vis.get_render_option()
+# opt.background_color = np.asarray([1, 1, 1])
+#
+# # 捕捉屏幕图像并保存
+# vis.poll_events()
+# vis.update_renderer()
+# vis.capture_screen_image("screenshot.png")
+#
+# # 关闭可视化窗口
+# vis.destroy_window()
+
+# #测试Open3d离屏渲染（目前有问题）
+# filename = r'data/car_0604/sync_data/0/lidar_concat/000000.pcd'
+# pcd = o3d.io.read_point_cloud(filename)
+# # 创建离屏渲染器
+# renderer = o3d.visualization.rendering.OffscreenRenderer(640, 480)
+# renderer.scene.add_geometry("point_cloud", pcd, o3d.visualization.rendering.MaterialRecord())
+# # 渲染并保存图像
+# img = renderer.render_to_image()
+# print(np.asarray(img).shape)
+# o3d.io.write_image("screenshot.png", img)
+
+pred_occ_path = '/home/qcyay/Project/FlashOCC/work_dirs/flashocc-r50/car_0604_results/0/000000/pred.npz'
+pred_occ = np.load(pred_occ_path)['pred']
+print(pred_occ.dtype)

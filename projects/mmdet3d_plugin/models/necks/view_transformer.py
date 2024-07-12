@@ -317,7 +317,7 @@ class LSSViewTransformer(BaseModule):
         B, N, D, H, W, _ = coor.shape
         num_points = B * N * D * H * W
         # record the index of selected points for acceleration purpose
-        #每个点在整个数据集中的线性位置，尺寸为[BNDHW]
+        #每个点在所有数据中的线性位置，尺寸为[BNDHW]
         ranks_depth = torch.range(
             0, num_points - 1, dtype=torch.int, device=coor.device)    # (B*N*D*H*W, ), [0, 1, ..., B*N*D*fH*fW-1]
         #特征空间的索引，尺寸为[BNHW]

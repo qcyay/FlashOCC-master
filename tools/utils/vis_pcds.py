@@ -13,7 +13,7 @@ import argparse
 import cv2
 import json
 
-#对连续帧点云进行可视化
+#对连续帧点云进行可视化并将点云投影到图像上可视化（可选）
 
 IMAGE_HEIGHT = 900
 IMAGE_WIDTH = 1600
