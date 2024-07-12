@@ -102,7 +102,7 @@ def voxel2pixels(intrinsic, sensor2ego, height, width, gt_camera_mask=None, labe
 
     #尺寸为[n]
     idxs = np.where(camera_mask)[0]
-    #尺寸为[n]
+    #尺寸为[n,2]
     points = points[idxs]
     if labels is not None:
         #尺寸为[n]
@@ -129,6 +129,10 @@ def parse_args():
         type=str,
         default=None,
         help='Path to save results')
+    parser.add_argument(
+        '--load_gt',
+        action='store_true',
+        help='Whether to project the ground truth onto the image')
     parser.add_argument(
         '--load_pred',
         action='store_true',
@@ -189,6 +193,12 @@ def main():
         scene_name = args.scene_name
         #样本数据标记
         sample_token = filename.rsplit('.', 1)[0]
+
+        if args.load_gt:
+            # 占用栅格真值结果路径
+            gt_occ_path = os.path.join(cfg.data_root, 'gts', scene_name, sample_token, 'labels.npz')
+            # 占用栅格真值结果，尺寸为[Dx,Dy,Dz]
+            gt_occ = np.load(gt_occ_path)['semantics']
         if args.load_pred:
             # 占用栅格预测结果路径
             pred_occ_path = os.path.join(results_dir, scene_name, sample_token, 'pred.npz')
@@ -211,7 +221,10 @@ def main():
             pred_img = img.copy()
             height, width = img.shape[:2]
 
-            if args.load_pred:
+            if args.load_gt:
+                # points，在相机朝向方向且投影后在图像范围内的点的坐标，尺寸为[n_pred,2]，camera_mask，点是否有效对应的掩码，尺寸为[Dx,Dy,Dz]
+                pred_points, pred_labels, camera_mask = voxel2pixels(intrinsic, sensor2ego, height, width, labels=gt_occ)
+            elif args.load_pred:
                 # points，在相机朝向方向且投影后在图像范围内的点的坐标，尺寸为[n_pred,2]，camera_mask，点是否有效对应的掩码，尺寸为[Dx,Dy,Dz]
                 pred_points, pred_labels, camera_mask = voxel2pixels(intrinsic, sensor2ego, height, width, labels=pred_occ)
             else:
@@ -221,14 +234,14 @@ def main():
             all_camera_masks = all_camera_masks | camera_mask
             # print(f'camera_mask:{len(np.where(camera_mask)[0])},all_camera_masks:{len(np.where(all_camera_masks)[0])}')
 
-            if args.load_pred:
+            if args.load_gt or args.load_pred:
                 colors = colormap_to_colors
                 # 尺寸为[n_pred]
                 _labels = pred_labels % len(colors)
                 # 尺寸为[n_pred,4]
                 pred_points_colors = colors[_labels]
 
-            if args.load_pred:
+            if args.load_gt or args.load_pred:
                 for point, point_color in zip(pred_points, pred_points_colors):
                     center_coordinates = (int(point[0]), int(point[1]))
                     point_color = tuple([int(x) for x in point_color])
@@ -241,17 +254,19 @@ def main():
             if save_dir is not None:
                 out_dir = os.path.join(save_dir, f'{scene_name}', f'{sample_token}')
                 mmcv.mkdir_or_exist(out_dir)
-                if args.load_pred:
+                if args.load_gt:
+                    cv2.imwrite(os.path.join(out_dir, f'GT_{view}.png'), pred_img)
+                elif args.load_pred:
                     cv2.imwrite(os.path.join(out_dir, f'PRED_{view}.png'), pred_img)
                 else:
                     cv2.imwrite(os.path.join(out_dir, f'PROJECT_{view}.png'), pred_img)
                 cv2.imwrite(os.path.join(out_dir, f'{view}.png'), img)
 
-        break
         if cnt == 0:
             save_path = os.path.join(cfg.data_root, 'mask_camera.npz')
-            # 保存到npz文件
-            np.savez_compressed(save_path, mask_camera=all_camera_masks)
+            if not os.path.exists(save_path):
+                # 保存到npz文件
+                np.savez_compressed(save_path, mask_camera=all_camera_masks)
 
 if __name__ == '__main__':
     main()
