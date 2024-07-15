@@ -495,6 +495,7 @@ warnings.filterwarnings('ignore')
 # print(np.asarray(img).shape)
 # o3d.io.write_image("screenshot.png", img)
 
-pred_occ_path = '/home/qcyay/Project/FlashOCC/work_dirs/flashocc-r50/car_0604_results/0/000000/pred.npz'
-pred_occ = np.load(pred_occ_path)['pred']
-print(pred_occ.dtype)
+import importlib
+module_path = 'projects.mmdet3d_plugin'
+plg_lib = importlib.import_module(module_path)
+print(plg_lib)

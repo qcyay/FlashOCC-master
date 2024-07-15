@@ -2,10 +2,12 @@
 from __future__ import division
 import argparse
 import copy
+import sys
 import os
 import time
 import warnings
 from os import path as osp
+sys.path.append(os.getcwd())
 
 import mmcv
 import torch
