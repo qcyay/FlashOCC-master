@@ -178,7 +178,10 @@ def draw(
     mlab.show()
 
 # points = remove_far(points, POINT_CLOUD_RANGE)
-def main(path, show):
+def main(path, save_path=None, show=False):
+
+    if args.load_mask:
+        camera_mask = np.load(os.path.join(path, 'mask_camera.npz'))['mask_camera']
 
     scene_name_list = [name for name in os.listdir(os.path.join(path, 'sync_data')) if os.path.isdir(os.path.join(path, 'sync_data', name))]
 
@@ -197,10 +200,16 @@ def main(path, show):
             # 尺寸为[200,200,16]
             occ_gt = points2voxel(points, SPTIAL_SHAPE, VOXEL_SIZE, 20)
             name = lidar_path.rsplit('/', 1)[1].split('.')[0]
-            save_path = f'{path}/gts/{scene_name}/{name}'
+            if save_path is not None:
+                save_path = f'{save_path}/gts/{scene_name:02d}/{name}'
+            else:
+                save_path = f'{path}/gts/{scene_name:02d}/{name}'
             os.makedirs(save_path, exist_ok=True)
             # 保存到npz文件
-            np.savez_compressed(f'{save_path}/labels.npz', semantics=occ_gt)
+            if args.load_mask:
+                np.savez_compressed(f'{save_path}/labels.npz', semantics=occ_gt, mask_camera=camera_mask)
+            else:
+                np.savez_compressed(f'{save_path}/labels.npz', semantics=occ_gt)
 
             if show:
                 draw(
@@ -212,11 +221,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--pts-path', required=True)
     parser.add_argument('--voxel-size', type=float, default=0.4)
+    parser.add_argument('--load_mask', action='store_true')
     parser.add_argument('--show', action='store_true')
+    parser.add_argument('--save_path', default=None)
 
     args = parser.parse_args()
     VOXEL_SIZE = args.voxel_size
     SPTIAL_SHAPE=(int((POINT_CLOUD_RANGE[3]-POINT_CLOUD_RANGE[0])/VOXEL_SIZE),
                   int((POINT_CLOUD_RANGE[4]-POINT_CLOUD_RANGE[1])/VOXEL_SIZE),
                   int((POINT_CLOUD_RANGE[5]-POINT_CLOUD_RANGE[2])/VOXEL_SIZE))
-    main(args.pts_path, args.show)
+    main(args.pts_path, args.save_path, args.show)
