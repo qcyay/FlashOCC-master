@@ -181,7 +181,10 @@ def draw(
 def main(path, save_path=None, show=False):
 
     if args.load_mask:
+        # 尺寸为[200,200,16]
         camera_mask = np.load(os.path.join(path, 'mask_camera.npz'))['mask_camera']
+        # 尺寸为[200,200,16]
+        lidar_mask = np.ones_like(camera_mask)
 
     scene_name_list = [name for name in os.listdir(os.path.join(path, 'sync_data')) if os.path.isdir(os.path.join(path, 'sync_data', name))]
 
@@ -201,15 +204,15 @@ def main(path, save_path=None, show=False):
             occ_gt = points2voxel(points, SPTIAL_SHAPE, VOXEL_SIZE, 20)
             name = lidar_path.rsplit('/', 1)[1].split('.')[0]
             if save_path is not None:
-                save_path = f'{save_path}/gts/{scene_name:02d}/{name}'
+                file_path = f'{save_path}/gts/{int(scene_name):02d}/{name}'
             else:
-                save_path = f'{path}/gts/{scene_name:02d}/{name}'
-            os.makedirs(save_path, exist_ok=True)
+                file_path = f'{path}/gts/{int(scene_name):02d}/{name}'
+            os.makedirs(file_path, exist_ok=True)
             # 保存到npz文件
             if args.load_mask:
-                np.savez_compressed(f'{save_path}/labels.npz', semantics=occ_gt, mask_camera=camera_mask)
+                np.savez_compressed(f'{file_path}/labels.npz', semantics=occ_gt, mask_lidar=lidar_mask, mask_camera=camera_mask)
             else:
-                np.savez_compressed(f'{save_path}/labels.npz', semantics=occ_gt)
+                np.savez_compressed(f'{file_path}/labels.npz', semantics=occ_gt)
 
             if show:
                 draw(
