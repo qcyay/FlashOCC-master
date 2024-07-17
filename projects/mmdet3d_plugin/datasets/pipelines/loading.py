@@ -331,7 +331,7 @@ class PrepareImageInputs(object):
         return imgs, sensor2egos, ego2globals, intrins, post_rots, post_trans
 
     def __call__(self, results):
-        # breakpoint()
+        # print(results.keys())
         # 键值dict_keys(['sample_idx', 'pts_filename', 'sweeps', 'timestamp', 'ann_infos', 'curr', 'occ_gt_path', 'img_fields', 'bbox3d_fields', 'pts_mask_fields', 'pts_seg_fields', 'bbox_fields', 'mask_fields', 'seg_fields', 'box_type_3d', 'box_mode_3d'])
         # img_inputs包含imgs，调整大小后的图像，尺寸为[N,3,H,W]，sensor2egos，相机到自车坐标系变换矩阵，尺寸为[N,4,4]，ego2globals，自车到全局坐标系变换矩阵，尺寸为[N,4,4]，intrins，内参矩阵，尺寸为[N,3,3]，post_rots，调整图像大小对应的旋转矩阵，尺寸为[N,3,3]，post_trans，调整图像大小对应的平移矩阵，尺寸为[N,3]
         results['img_inputs'] = self.get_inputs(results)
@@ -399,11 +399,14 @@ class LoadAnnotationsBEVDepth(object):
                 gt_boxes[:, 6] = 2 * torch.asin(torch.tensor(1.0)) - gt_boxes[:, 6]
             if flip_dy:
                 gt_boxes[:, 6] = -gt_boxes[:, 6]
-            gt_boxes[:, 7:] = (
-                rot_mat[:2, :2] @ gt_boxes[:, 7:].unsqueeze(-1)).squeeze(-1)
+            #TODO 这里目前写法还比较直接，后续需要认真看一看为什么读入数据的维度
+            if gt_boxes.shape[1] > 7:
+                gt_boxes[:, 7:] = (
+                    rot_mat[:2, :2] @ gt_boxes[:, 7:].unsqueeze(-1)).squeeze(-1)
         return gt_boxes, rot_mat
 
     def __call__(self, results):
+        # print(results['curr'].keys())
         gt_boxes, gt_labels = results['ann_infos']      # (N_gt, 9),  (N_gt, )
         #gt_boxes，尺寸为[N_gt,9]，gt_labels，尺寸为[N_gt]
         gt_boxes, gt_labels = torch.Tensor(gt_boxes), torch.tensor(gt_labels)
@@ -468,7 +471,7 @@ class PointToMultiViewDepth(object):
         height, width = height // self.downsample, width // self.downsample
         depth_map = torch.zeros((height, width), dtype=torch.float32)
         coor = torch.round(points[:, :2] / self.downsample)     # (N_points, 2)  2: (u, v)
-        depth = points[:, 2]    # (N_points, )哦
+        depth = points[:, 2]    # (N_points, )
         kept1 = (coor[:, 0] >= 0) & (coor[:, 0] < width) & (
             coor[:, 1] >= 0) & (coor[:, 1] < height) & (
                 depth < self.grid_config['depth'][1]) & (
@@ -554,8 +557,8 @@ class PointToMultiViewDepth(object):
 class LoadOccGTFromFile(object):
     def __call__(self, results):
         occ_gt_path = results['occ_gt_path']
+        # print(occ_gt_path)
         occ_gt_path = os.path.join(occ_gt_path, "labels.npz")
-
         occ_labels = np.load(occ_gt_path)
         semantics = occ_labels['semantics']
         mask_lidar = occ_labels['mask_lidar']
